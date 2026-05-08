@@ -1,0 +1,13 @@
+{
+  "name": "sol-trade-agent-backend",
+  "version": "0.1.0",
+  "description": "Backend for Solana Web3 LLM Trading Agent",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["solana", "web3", "llm", "trading", "agent"],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "sol-trade-agent-frontend",
+  "version": "0.1.0",
+  "description": "Frontend for Solana Web3 LLM Trading Agent",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["solana", "web3", "llm", "trading", "agent"],
+  "author": "",
+  "license": "MIT"
+}
