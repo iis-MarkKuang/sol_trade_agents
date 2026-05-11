@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Market data from various sources
+model MarketData {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()"))
+  token           String
+  symbol          String
+  timestamp       DateTime
+  source          String
+  price           Decimal?
+  volume24h       Decimal?
+  marketCap       Decimal?
+  rsi14           Decimal?
+  macdLine        Decimal?
+  macdSignal      Decimal?
+  macdHistogram   Decimal?
+  bbUpper         Decimal?
+  bbMiddle        Decimal?
+  bbLower         Decimal?
+  tvl             Decimal?
+  activeAddresses Int?
+  txVolume        Decimal?
+  gasUsed         Decimal?
+  rawData         Json?
+  createdAt       DateTime @default(now())
+
+  @@map("market_data")
+  @@index([token, timestamp])
+  @@index([source, timestamp])
+  @@index([symbol, timestamp])
+}
+
+// LLM-generated analysis
+model AnalysisResult {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()"))
+  token     String
+  timestamp DateTime
+  type      String
+  content   String
+  score     Decimal?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@map("analysis_result")
+  @@index([token, timestamp])
+  @@index([type, timestamp])
+}
+
+// Trading signals
+model TradeSignal {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()"))
+  token         String
+  symbol        String
+  timestamp     DateTime
+  action        String
+  reason        String
+  price         Decimal
+  strategy      String
+  status        String
+  executedPrice Decimal?
+  executedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@map("trade_signal")
+  @@index([token, timestamp])
+  @@index([status, timestamp])
+}
+
+// Strategy backtest results
+model BacktestResult {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()"))
+  strategy    String
+  parameters  Json
+  startDate   DateTime
+  endDate     DateTime
+  totalReturn Decimal
+  winRate     Decimal
+  maxDrawdown Decimal
+  trades      Int
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@map("backtest_result")
+}
+
+// Crawler job status
+model CrawlerJob {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()"))
+  source    String
+  status    String
+  startedAt DateTime?
+  endedAt   DateTime?
+  error     String?
+  dataCount Int?
+  createdAt DateTime @default(now())
+
+  @@map("crawler_job")
+}
