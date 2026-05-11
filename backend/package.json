@@ -2,12 +2,33 @@
   "name": "sol-trade-agent-backend",
   "version": "0.1.0",
   "description": "Backend for Solana Web3 LLM Trading Agent",
-  "main": "src/index.js",
+  "type": "module",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "keywords": ["solana", "web3", "llm", "trading", "agent"],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@jup-ag/api": "^6.0.48",
+    "@orca-so/common-sdk": "^0.7.0",
+    "@orca-so/whirlpools-sdk": "^0.20.0",
+    "@raydium-io/raydium-sdk-v2": "^0.2.43-alpha",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "decimal.js": "^10.6.0",
+    "eventsource": "^4.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
 }

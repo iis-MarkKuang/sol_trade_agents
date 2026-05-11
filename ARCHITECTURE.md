@@ -1,11 +1,13 @@
 # Solana Frontier Web3 LLM Agent Architecture
 
 ## Overview
+
 This project is a Web3 LLM agent platform for autonomous Solana trading, similar to b.ai. It combines AI-driven insights, real-time market data, and on-chain execution.
 
 ## Tech Stack
 
 ### Frontend (`/frontend`)
+
 - **Framework**: React 18 + TypeScript
 - **Styling**: Tailwind CSS
 - **Wallet Integration**: Solana Wallet Adapter
@@ -14,6 +16,7 @@ This project is a Web3 LLM agent platform for autonomous Solana trading, similar
 - **API Client**: Axios
 
 ### Backend (`/backend`)
+
 - **Runtime**: Node.js 20 + TypeScript
 - **API Framework**: NestJS (modular, scalable)
 - **LLM Integration**: LangChain (supports OpenAI, Anthropic, local models)
@@ -26,11 +29,13 @@ This project is a Web3 LLM agent platform for autonomous Solana trading, similar
 - **Data Validation**: Zod
 
 ### Smart Contracts (`/contracts`)
+
 - **Framework**: Anchor (Solana)
 - **DEX Integrations**: Jupiter, Raydium, Orca
 - **Price Aggregation**: Pyth Network
 
 ### DevOps
+
 - **Containerization**: Docker + Docker Compose
 - **Monitoring**: Prometheus + Grafana
 - **Logging**: Winston + ELK Stack (optional)
@@ -38,42 +43,51 @@ This project is a Web3 LLM agent platform for autonomous Solana trading, similar
 ## High-Level Components
 
 ### 1. Frontend (`/frontend`)
+
 - **Agent LLM UI**: Configure LLM vendors, API keys
 - **Dashboard**: Monitor trading performance, market insights
 - **Strategy Configuration**: Customize trading rules and parameters
 - **Real-time Charts**: Display market data and trade history
 
 ### 2. Backend (`/backend`)
+
 #### `/backend/api`
+
 - REST API for frontend interactions
 - Authentication and authorization
 - Agent configuration management
 
 #### `/backend/agents`
+
 - LLM Agent orchestration (LangChain)
 - Temporal workflow automation
 - Daily strategy updates
 
 #### `/backend/data`
+
 - Market data ingestion layer
 - Real-time data streaming from Dune, TradingView, CoinMarketCap, etc.
 - Data processing and normalization
 
 #### `/backend/crawlers`
+
 - Web crawlers for collecting data from 3rd-party trade sites
 - Scheduled scraping jobs (BullMQ)
 
 #### `/backend/strategies`
+
 - Trading strategy implementations
 - nBBO (National Best Bid/Offer) price optimization
 - Risk management logic
 
 #### `/backend/db`
+
 - Database models and connections (Prisma)
 - Time-series data storage (TimescaleDB)
 - Historical data querying
 
 ### 3. Smart Contracts (`/contracts`)
+
 - Solana programs for on-chain execution
 - Best price execution logic
 - Secure trading interactions with DEXs via Jupiter
@@ -121,7 +135,8 @@ sequenceDiagram
 
 ## Real-time Agents Workflow (nBBO Price Execution)
 
-This workflow handles real-time trading with nBBO (National Best Bid/Offer) price optimization across multiple DEXs.
+This workflow handles real-time trading using an nBBO-style execution engine for best-price discovery across multiple Solana liquidity sources.  
+The nBBO engine runs off-chain to compare executable quotes, route quality, slippage, liquidity depth, fees, and latency before preparing a transaction for user approval or delegated execution.
 
 ```mermaid
 sequenceDiagram
@@ -129,44 +144,75 @@ sequenceDiagram
     participant Frontend as Frontend UI
     participant API as Backend API
     participant RTAgent as Real-time Agent
-    participant Pyth as Pyth Price Feeds
-    participant DEX1 as Jupiter Aggregator
-    participant DEX2 as Raydium
-    participant DEX3 as Orca
-    participant nBBO as nBBO Engine
-    participant Contract as Solana Program
-    participant Wallet as User Wallet
+    participant Risk as Risk & Policy Engine
+    participant Pyth as Pyth/Switchboard Price Feeds
+    participant Quote as Quote Aggregator
+    participant Jupiter as Jupiter Aggregator
+    participant Raydium as Raydium / OpenBook Pools
+    participant Orca as Orca Whirlpools
+    participant nBBO as nBBO Execution Engine
+    participant TxBuilder as Transaction Builder
+    participant Wallet as User Wallet / Agent Wallet
+    participant Solana as Solana Network
+    participant Program as Optional Guardrail Program
+    participant DB as PostgreSQL/TimescaleDB
+    participant WS as WebSocket Gateway
 
-    User->>Frontend: Initiate trade or auto-trade triggers
-    Frontend->>API: Send trade request
+    User->>Frontend: Initiate trade / enable auto-trade rule
+    Frontend->>API: Submit trade intent
     API->>RTAgent: Start real-time execution workflow
-    RTAgent->>Pyth: Subscribe to real-time price feeds
-    Pyth-->>RTAgent: Stream price updates
-    par Query multiple DEXs
-        RTAgent->>DEX1: Get order book (BID/ASK)
-        DEX1-->>RTAgent: Return order book data
-        RTAgent->>DEX2: Get order book (BID/ASK)
-        DEX2-->>RTAgent: Return order book data
-        RTAgent->>DEX3: Get order book (BID/ASK)
-        DEX3-->>RTAgent: Return order book data
+
+    RTAgent->>Risk: Validate user settings, max size, slippage, token allowlist
+    Risk-->>RTAgent: Approved / rejected
+
+    RTAgent->>Pyth: Read reference price & freshness
+    Pyth-->>RTAgent: Return oracle price + confidence interval
+
+    par Fetch executable quotes
+        RTAgent->>Jupiter: Request route quote
+        Jupiter-->>RTAgent: Return swap route, expected out, price impact
+        RTAgent->>Raydium: Request pool/orderbook quote
+        Raydium-->>RTAgent: Return executable quote
+        RTAgent->>Orca: Request Whirlpool quote
+        Orca-->>RTAgent: Return executable quote
     end
-    RTAgent->>nBBO: Aggregate BID/ASK from all sources
-    nBBO->>nBBO: Calculate best BID & best ASK
-    nBBO-->>RTAgent: Return nBBO prices + optimal route
-    RTAgent->>RTAgent: Validate trade & risk checks
-    RTAgent->>Contract: Send execute trade instruction with nBBO price
-    Contract->>Contract: Verify price & trade parameters
-    Contract->>Wallet: Request signature
-    Wallet-->>Contract: Approve & sign
-    Contract->>DEX1/DEX2/DEX3: Execute trade via best route
-    DEX1/DEX2/DEX3-->>Contract: Return trade result
-    Contract-->>RTAgent: Trade executed successfully
-    RTAgent->>DB: Log trade history
-    RTAgent->>Frontend: Notify trade completion via WebSocket
-    Frontend->>User: Display trade confirmation
+
+    RTAgent->>Quote: Normalize quotes
+    Quote->>Quote: Convert to common format: price, fees, depth, route, latency
+    Quote-->>nBBO: Send normalized executable quotes
+
+    nBBO->>nBBO: Select best executable bid/offer
+    nBBO->>nBBO: Check oracle deviation, slippage, route risk, liquidity depth
+    nBBO-->>RTAgent: Return best route + execution constraints
+
+    RTAgent->>TxBuilder: Build versioned transaction
+    TxBuilder->>TxBuilder: Add compute budget, priority fee, slippage limit, route instructions
+
+    alt User-approved trade
+        TxBuilder-->>Frontend: Return unsigned transaction
+        Frontend->>Wallet: Request user signature
+        Wallet-->>Frontend: Signed transaction
+        Frontend->>API: Submit signed transaction
+    else Delegated agent execution
+        TxBuilder->>Wallet: Sign using delegated agent wallet / session key
+        Wallet-->>TxBuilder: Signed transaction
+    end
+
+    API->>Solana: Send signed transaction
+    Solana->>Program: Optional guardrail verification
+    Program->>Program: Verify max slippage, allowed route, user policy
+    Program-->>Solana: Allow / reject execution
+    Solana->>Solana: Execute swap route
+    Solana-->>API: Return transaction signature + status
+
+    API->>DB: Store trade intent, quote snapshot, route, tx signature, result
+    API->>WS: Publish execution update
+    WS->>Frontend: Notify pending / confirmed / failed
+    Frontend->>User: Display trade result
 ```
 
 ## Data Flow
+
 1. Crawlers and real-time data links fetch market data from various sources
 2. Data is ingested and stored in the database
 3. LLM agents analyze the data and generate investment insights
@@ -176,12 +222,14 @@ sequenceDiagram
 ## Key Features
 
 ### Offline Analysis
+
 - Scheduled data collection from CoinMarketCap, TradingView, Dune
 - Historical data aggregation and normalization
 - LLM-powered market analysis and insight generation
 - Strategy backtesting
 
 ### Real-time Trading
+
 - Multi-DEX order book aggregation
 - nBBO price calculation and route optimization
 - Low-latency trade execution via Solana programs
