@@ -12,6 +12,7 @@ import type { DexAdapter } from '../dex/adapter.js';
 import { DexOrderBookAggregator } from '../dex/aggregator.js';
 import { JupiterQuoteAdapter } from '../dex/jupiter-adapter.js';
 import { MockDexAdapter } from '../dex/mock-adapter.js';
+import { OracleMockAdapter } from '../dex/oracle-mock-adapter.js';
 import { OrcaWhirlpoolOrderBookAdapter } from '../dex/orca-adapter.js';
 import { RaydiumOrderBookAdapter } from '../dex/raydium-adapter.js';
 import { NbboEngine } from '../nbbo/engine.js';
@@ -26,6 +27,7 @@ import type {
   AggregatedOrderBook,
   DexQuoteRequest,
   NbboSnapshot,
+  PriceUpdate,
   RiskPolicy,
   TokenPair,
   TradeExecutionPlan,
@@ -63,6 +65,7 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
   private priceFeed!: PriceFeedSubscriber;
   private priceSubscription?: PriceFeedSubscription;
   private policy!: RiskPolicy;
+  private readonly priceCache = new Map<string, PriceUpdate>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -85,12 +88,19 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       maxQuoteAgeMs: cfg.maxQuoteAgeMs,
     };
 
+    this.priceFeed = new PythPriceFeedService({
+      endpoint: cfg.pythHermesEndpoint,
+      staleMs: cfg.pythStaleMs,
+      maxConfidenceBps: cfg.pythMaxConfidenceBps,
+    });
+
     const adapters: DexAdapter[] = cfg.enableRealDex
       ? this.buildLiveAdapters()
       : [
-          new MockDexAdapter({
+          new OracleMockAdapter({
             source: 'mock',
-            midPrice: 160,
+            getMidPrice: (symbol) => this.priceCache.get(symbol)?.price,
+            fallbackMidPrice: 160,
             bidSpreadBps: 8,
             askSpreadBps: 10,
             liquidityUsd: 5_000_000,
@@ -99,11 +109,6 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
 
     this.aggregator = new DexOrderBookAggregator(adapters, {
       quoteTimeoutMs: cfg.dexQuoteTimeoutMs,
-    });
-    this.priceFeed = new PythPriceFeedService({
-      endpoint: cfg.pythHermesEndpoint,
-      staleMs: cfg.pythStaleMs,
-      maxConfidenceBps: cfg.pythMaxConfidenceBps,
     });
 
     this.core = new RealTimeAgentCore({
@@ -343,8 +348,26 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Warm the cache so the first trade after boot has a mid price ready.
+    this.priceFeed
+      .getLatest(pairs)
+      .then((updates) => {
+        for (const update of updates.values()) {
+          this.priceCache.set(update.symbol, update);
+        }
+        this.logger.log(
+          `Cached initial Pyth prices for ${[...updates.keys()].join(', ')}`,
+        );
+      })
+      .catch((error) =>
+        this.logger.warn(
+          `Failed to warm Pyth price cache: ${(error as Error).message}`,
+        ),
+      );
+
     this.priceFeed
       .subscribe(pairs, (update) => {
+        this.priceCache.set(update.symbol, update);
         this.gateway.emitPriceUpdate({
           type: 'price.update',
           symbol: update.symbol,
