@@ -76,12 +76,18 @@ npm install
 # 2. Generate Prisma Client
 npm run db:generate
 
-# 3. Run migrations
-npm run db:migrate
+# 3. Sync the Prisma schema to your local Postgres
+#    (creates market_data / trade_signal / realtime_trade / …)
+npm run db:push
 
 # 4. Start NestJS dev server
 npm run start:dev
 ```
+
+> Note: `db:push` is the canonical schema sync for this project — it always
+> matches what the Prisma Client expects. The `supabase/migrations/*.sql`
+> files exist as a parallel manual-migration path; they are kept in sync but
+> not required for the demo.
 
 ### Step 5: Verify Setup
 - Check Supabase Studio: http://localhost:54323
@@ -124,7 +130,7 @@ cd backend
 cp .env.example .env   # (skip if .env already exists)
 npm install
 npm run db:generate
-npm run db:migrate
+npm run db:push        # syncs Prisma schema to the live DB
 
 # 3. Configure frontend
 cd ../frontend
@@ -237,7 +243,8 @@ npm run build         # tsc -b && vite build — should complete cleanly
 From the `backend/` directory:
 ```bash
 npm run db:generate       # Generate Prisma Client
-npm run db:migrate        # Apply new migrations
+npm run db:push           # Sync Prisma schema directly to live DB (preferred for demo)
+npm run db:migrate        # Apply SQL migrations from supabase/migrations/
 npm run db:reset          # Reset database and re-run all migrations
 npm run db:status         # Check Supabase status
 npm run supabase:start    # Start Supabase local stack

@@ -21,6 +21,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:generate": "prisma generate",
+    "db:push": "prisma db push --skip-generate",
     "db:migrate": "cd .. && npx supabase migration up",
     "db:reset": "cd .. && npx supabase db reset",
     "db:status": "cd .. && npx supabase status",
