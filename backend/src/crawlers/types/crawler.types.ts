@@ -7,7 +7,9 @@ export interface CrawledMarketData {
   volume24h?: number;
   marketCap?: number;
   rsi?: number;
+  rsi14?: number;
   macd?: number;
+  macdLine?: number;
   tvl?: number;
   activeAddresses?: number;
   rawData: any;

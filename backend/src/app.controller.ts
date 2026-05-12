@@ -3,6 +3,7 @@ import { AppService } from './app.service';
 import { CoinmarketcapCrawlerService } from './crawlers/coinmarketcap-crawler.service';
 import { TradingviewCrawlerService } from './crawlers/tradingview-crawler.service';
 import { DuneCrawlerService } from './crawlers/dune-crawler.service';
+import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
 export class AppController {
@@ -11,6 +12,7 @@ export class AppController {
     private readonly cmcCrawler: CoinmarketcapCrawlerService,
     private readonly tvCrawler: TradingviewCrawlerService,
     private readonly duneCrawler: DuneCrawlerService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get()
@@ -53,5 +55,29 @@ export class AppController {
       tradingview: tvData,
       dune: duneData,
     };
+  }
+
+  @Get('data/market')
+  async getMarketData() {
+    return await this.prisma.marketData.findMany({
+      take: 50,
+      orderBy: { timestamp: 'desc' },
+    });
+  }
+
+  @Get('data/analysis')
+  async getAnalysis() {
+    return await this.prisma.analysisResult.findMany({
+      take: 10,
+      orderBy: { timestamp: 'desc' },
+    });
+  }
+
+  @Get('data/signals')
+  async getTradeSignals() {
+    return await this.prisma.tradeSignal.findMany({
+      take: 20,
+      orderBy: { timestamp: 'desc' },
+    });
   }
 }
