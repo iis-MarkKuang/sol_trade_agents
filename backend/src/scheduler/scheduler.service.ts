@@ -1,110 +1,133 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { Queue, Worker, Job } from 'bullmq';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { Job, Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
-import { CoinmarketcapCrawlerService } from '../crawlers/coinmarketcap-crawler.service';
-import { TradingviewCrawlerService } from '../crawlers/tradingview-crawler.service';
-import { DuneCrawlerService } from '../crawlers/dune-crawler.service';
-import { DataCleanerService } from '../data/data-cleaner.service';
-import { DataNormalizerService } from '../data/data-normalizer.service';
-import { LlmAgentService } from '../agents/llm-agent.service';
-import { StrategyEngineService } from '../strategy/strategy-engine.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { ConfigService } from '../config/config.service';
+import { OfflineAgentService } from './offline-agent.service';
+
+const QUEUE_NAME = 'offline-agent';
+const JOB_NAME = 'offline-pipeline';
 
 @Injectable()
 export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SchedulerService.name);
-  private connection: IORedis;
-  private dataCollectionQueue: Queue;
+
+  private connection?: IORedis;
+  private queue?: Queue;
   private worker?: Worker;
+  private enabled = false;
 
   constructor(
-    private coinmarketcapCrawler: CoinmarketcapCrawlerService,
-    private tradingviewCrawler: TradingviewCrawlerService,
-    private duneCrawler: DuneCrawlerService,
-    private dataCleaner: DataCleanerService,
-    private dataNormalizer: DataNormalizerService,
-    private llmAgent: LlmAgentService,
-    private strategyEngine: StrategyEngineService,
-    private prisma: PrismaService
-  ) {
-    this.connection = new IORedis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      maxRetriesPerRequest: null,
-    });
+    private readonly configService: ConfigService,
+    private readonly offlineAgent: OfflineAgentService,
+  ) {}
 
-    this.dataCollectionQueue = new Queue('data-collection', {
-      connection: this.connection,
-    });
-  }
+  async onModuleInit(): Promise<void> {
+    const flag = (process.env.ENABLE_SCHEDULER || '').toLowerCase();
+    this.enabled = flag === 'true' || flag === '1';
 
-  onModuleInit() {
-    this.logger.log('Scheduler module initialized');
-    this.startWorker();
-    this.scheduleDataCollection();
-  }
+    if (!this.enabled) {
+      this.logger.log(
+        'Scheduler disabled (set ENABLE_SCHEDULER=true to enable). ' +
+          'Use POST /agent/run-pipeline to trigger manually.',
+      );
+      return;
+    }
 
-  onModuleDestroy() {
-    this.logger.log('Scheduler module destroying');
-    this.worker?.close();
-    this.dataCollectionQueue.close();
-    this.connection.disconnect();
-  }
-
-  private startWorker() {
-    this.worker = new Worker(
-      'data-collection',
-      async (job: Job) => {
-        this.logger.log(`Processing job ${job.id}`);
-        await this.runDataPipeline();
-      },
-      { connection: this.connection }
-    );
-  }
-
-  private async scheduleDataCollection() {
-    await this.dataCollectionQueue.add('daily-collection', {}, {
-      repeat: {
-        every: 60 * 60 * 1000, // Every hour
-      },
-    });
-    this.logger.log('Data collection scheduled');
-    await this.runDataPipeline(); // Run once on start
-  }
-
-  private async runDataPipeline() {
     try {
-      this.logger.log('Starting data pipeline');
-
-      const [coinmarketcapData, tradingviewData, duneData] = await Promise.all([
-        this.coinmarketcapCrawler.fetchAndSave(),
-        this.tradingviewCrawler.fetchAndSave(),
-        this.duneCrawler.fetchAndSave(),
-      ]);
-
-      const allData = [...coinmarketcapData, ...tradingviewData, ...duneData];
-      const cleaned = this.dataCleaner.cleanData(allData);
-      const normalized = this.dataNormalizer.normalizeData(cleaned);
-
-      const analysis = await this.llmAgent.generateAnalysis(normalized);
-
-      const analysisResult = await this.prisma.analysisResult.create({
-        data: {
-          analysis,
-          timestamp: new Date(),
-        },
+      this.connection = new IORedis(this.configService.redisUrl, {
+        maxRetriesPerRequest: null,
+        lazyConnect: false,
+      });
+      this.connection.on('error', (error: Error) => {
+        this.logger.warn(`Redis connection error: ${error.message}`);
       });
 
-      const signals = await this.strategyEngine.runAllStrategies(normalized);
-      for (const signal of signals) {
-        await this.prisma.tradeSignal.create({
-          data: signal,
-        });
-      }
+      this.queue = new Queue(QUEUE_NAME, { connection: this.connection });
+      this.worker = new Worker(
+        QUEUE_NAME,
+        async (job: Job) => {
+          this.logger.log(`Processing scheduled job ${job.id}`);
+          return this.offlineAgent.runPipeline();
+        },
+        { connection: this.connection },
+      );
 
-      this.logger.log('Data pipeline completed');
+      const intervalMs = Number(
+        process.env.SCHEDULER_INTERVAL_MS ?? 60 * 60 * 1000,
+      );
+      await this.queue.add(
+        JOB_NAME,
+        {},
+        {
+          repeat: { every: intervalMs },
+          removeOnComplete: 100,
+          removeOnFail: 50,
+        },
+      );
+      this.logger.log(
+        `BullMQ scheduler started (interval=${intervalMs}ms). Running an initial pass…`,
+      );
+      this.offlineAgent
+        .runPipeline()
+        .catch((error) =>
+          this.logger.error(
+            `Initial offline pipeline run failed: ${(error as Error).message}`,
+          ),
+        );
     } catch (error) {
-      this.logger.error('Data pipeline failed', error);
+      this.logger.warn(
+        `Failed to start BullMQ scheduler: ${(error as Error).message}. ` +
+          `Falling back to manual trigger only.`,
+      );
+      await this.shutdown();
     }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.shutdown();
+  }
+
+  isEnabled(): boolean {
+    return this.enabled && Boolean(this.queue);
+  }
+
+  /**
+   * Trigger the pipeline immediately. When BullMQ is up we enqueue a job,
+   * otherwise we run inline so the demo always works.
+   */
+  async triggerPipelineNow(): Promise<{ mode: 'queued' | 'inline'; jobId?: string }> {
+    if (this.queue) {
+      const job = await this.queue.add(JOB_NAME, { triggeredAt: Date.now() });
+      return { mode: 'queued', jobId: job.id };
+    }
+
+    await this.offlineAgent.runPipeline();
+    return { mode: 'inline' };
+  }
+
+  private async shutdown(): Promise<void> {
+    try {
+      await this.worker?.close();
+    } catch (error) {
+      this.logger.debug(`Worker close error: ${(error as Error).message}`);
+    }
+    try {
+      await this.queue?.close();
+    } catch (error) {
+      this.logger.debug(`Queue close error: ${(error as Error).message}`);
+    }
+    try {
+      this.connection?.disconnect();
+    } catch (error) {
+      this.logger.debug(`Redis disconnect error: ${(error as Error).message}`);
+    }
+    this.worker = undefined;
+    this.queue = undefined;
+    this.connection = undefined;
   }
 }
