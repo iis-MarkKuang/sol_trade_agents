@@ -25,6 +25,7 @@
     "supabase:start": "cd .. && npx supabase start",
     "supabase:stop": "cd .. && npx supabase stop"
   },
+  "keywords": ["solana", "web3", "llm", "trading", "agent"],
   "dependencies": {
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
@@ -46,7 +47,16 @@
     "rxjs": "^7.8.0",
     "socket.io": "^4.7.0",
     "zod": "^3.22.0",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "@coral-xyz/anchor": "^0.32.1",
+    "@jup-ag/api": "^6.0.48",
+    "@orca-so/common-sdk": "^0.7.0",
+    "@orca-so/whirlpools-sdk": "^0.20.0",
+    "@raydium-io/raydium-sdk-v2": "^0.2.43-alpha",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "decimal.js": "^10.6.0",
+    "eventsource": "^4.1.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
