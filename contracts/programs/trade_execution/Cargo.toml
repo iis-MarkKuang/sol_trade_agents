@@ -1,0 +1,19 @@
+[package]
+name = "trade_execution"
+version = "0.1.0"
+description = "Guardrail trade execution program for Solana nBBO agent routes"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "trade_execution"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+
+[dependencies]
+anchor-lang = "0.31.1"
