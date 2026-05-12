@@ -1,0 +1,13 @@
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+trade_execution = "G2usi3gnE1NVm9DmTEcChvbkDc6YY9eRYyxF8uJSS4CZ"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "npm run test"

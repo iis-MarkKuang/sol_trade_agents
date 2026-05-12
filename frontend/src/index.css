@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-lg shadow-black/20 backdrop-blur;
+  }
+
+  .stat-label {
+    @apply text-xs font-medium uppercase tracking-wider text-slate-400;
+  }
+
+  .stat-value {
+    @apply text-2xl font-semibold text-slate-100;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-950;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand text-white shadow-md shadow-brand/30 hover:bg-brand/90 focus:ring-brand;
+  }
+
+  .btn-secondary {
+    @apply btn border border-slate-700 bg-slate-800/60 text-slate-100 hover:bg-slate-700/70 focus:ring-slate-500;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .badge-green {
+    @apply badge bg-emerald-500/15 text-emerald-300;
+  }
+
+  .badge-red {
+    @apply badge bg-rose-500/15 text-rose-300;
+  }
+
+  .badge-amber {
+    @apply badge bg-amber-500/15 text-amber-300;
+  }
+
+  .badge-blue {
+    @apply badge bg-sky-500/15 text-sky-300;
+  }
+
+  .badge-slate {
+    @apply badge bg-slate-500/15 text-slate-300;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/40;
+  }
+
+  .select {
+    @apply input appearance-none;
+  }
+
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400;
+  }
+}

@@ -11,3 +11,10 @@ __pycache__/
 .vscode/
 .idea/
 *.log
+
+# TypeScript / Vite build artifacts
+*.tsbuildinfo
+frontend/dist/
+
+# Coverage
+coverage/

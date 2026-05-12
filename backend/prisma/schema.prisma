@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Market data from various sources
+model MarketData {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()"))
+  token           String
+  symbol          String
+  timestamp       DateTime
+  source          String
+  price           Decimal?
+  volume24h       Decimal?
+  marketCap       Decimal?
+  rsi14           Decimal?
+  macdLine        Decimal?
+  macdSignal      Decimal?
+  macdHistogram   Decimal?
+  bbUpper         Decimal?
+  bbMiddle        Decimal?
+  bbLower         Decimal?
+  tvl             Decimal?
+  activeAddresses Int?
+  txVolume        Decimal?
+  gasUsed         Decimal?
+  rawData         Json?
+  createdAt       DateTime @default(now())
+
+  @@map("market_data")
+  @@index([token, timestamp])
+  @@index([source, timestamp])
+  @@index([symbol, timestamp])
+}
+
+// LLM-generated analysis
+model AnalysisResult {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()"))
+  token     String?
+  timestamp DateTime
+  type      String?
+  content   String
+  score     Decimal?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@map("analysis_result")
+  @@index([token, timestamp])
+  @@index([type, timestamp])
+}
+
+// Trading signals
+model TradeSignal {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()"))
+  token         String
+  symbol        String
+  timestamp     DateTime
+  action        String
+  reason        String
+  price         Decimal
+  strategy      String
+  status        String
+  executedPrice Decimal?
+  executedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@map("trade_signal")
+  @@index([token, timestamp])
+  @@index([status, timestamp])
+}
+
+// Strategy backtest results
+model BacktestResult {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()"))
+  strategy    String
+  parameters  Json
+  startDate   DateTime
+  endDate     DateTime
+  totalReturn Decimal
+  winRate     Decimal
+  maxDrawdown Decimal
+  trades      Int
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@map("backtest_result")
+}
+
+// Crawler job status
+model CrawlerJob {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()"))
+  source    String
+  status    String
+  startedAt DateTime?
+  endedAt   DateTime?
+  error     String?
+  dataCount Int?
+  createdAt DateTime @default(now())
+
+  @@map("crawler_job")
+}
+
+// Realtime trade lifecycle (nBBO execution)
+model RealtimeTrade {
+  id                 String              @id @default(dbgenerated("uuid_generate_v4()"))
+  intentId           String?
+  userPubkey         String?
+  pair               String
+  side               String
+  amountIn           String
+  maxSlippageBps     Int
+  status             String
+  selectedDex        String?
+  oraclePrice        Decimal?
+  executionPrice     Decimal?
+  minOutAmount       String?
+  txSignature        String?
+  rejectionReason    String?
+  plan               Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  logs               RealtimeAgentLog[]
+
+  @@map("realtime_trade")
+  @@index([userPubkey, createdAt])
+  @@index([status, createdAt])
+  @@index([pair, createdAt])
+}
+
+// Structured logs emitted by the realtime agent
+model RealtimeAgentLog {
+  id         String         @id @default(dbgenerated("uuid_generate_v4()"))
+  tradeId    String?
+  level      String
+  event      String
+  message    String?
+  metadata   Json?
+  createdAt  DateTime       @default(now())
+  trade      RealtimeTrade? @relation(fields: [tradeId], references: [id], onDelete: SetNull)
+
+  @@map("realtime_agent_log")
+  @@index([tradeId, createdAt])
+  @@index([level, createdAt])
+}

@@ -1,0 +1,20 @@
+version: '3.8'
+
+# Local Redis for BullMQ job queues
+# Database is now handled by Supabase local stack (run "npx supabase start")
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: sol-trade-agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis_data:
