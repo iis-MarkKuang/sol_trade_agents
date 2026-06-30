@@ -17,6 +17,7 @@ class StubConfigService {
     pythHermesEndpoint: undefined,
     pythStaleMs: 15_000,
     pythMaxConfidenceBps: 75,
+    pythUseMock: true,
     maxSlippageBps: 100,
     maxPositionNotionalUsd: 25_000,
     minLiquidityUsd: 1_000,

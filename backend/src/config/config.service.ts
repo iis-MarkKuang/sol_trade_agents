@@ -43,6 +43,7 @@ const ConfigSchema = z.object({
   PYTH_HERMES_ENDPOINT: z.string().optional(),
   PYTH_STALE_MS: numberFromString(15_000),
   PYTH_MAX_CONFIDENCE_BPS: numberFromString(75),
+  PYTH_USE_MOCK: booleanFromString(false),
 
   ENABLE_INJECTIVE: booleanFromString(false),
   INJECTIVE_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
@@ -134,6 +135,7 @@ export class ConfigService {
       pythHermesEndpoint: this.config.PYTH_HERMES_ENDPOINT,
       pythStaleMs: this.config.PYTH_STALE_MS,
       pythMaxConfidenceBps: this.config.PYTH_MAX_CONFIDENCE_BPS,
+      pythUseMock: this.config.PYTH_USE_MOCK,
       maxSlippageBps: this.config.MAX_SLIPPAGE_BPS,
       maxPositionNotionalUsd: this.config.MAX_POSITION_NOTIONAL_USD,
       minLiquidityUsd: this.config.MIN_LIQUIDITY_USD,

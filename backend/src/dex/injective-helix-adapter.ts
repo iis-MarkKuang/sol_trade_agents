@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import type { DexAdapter } from "./adapter.js";
 import type { DexQuote, DexQuoteRequest } from "../types.js";
 import { inputOutputForSide, outputAmountFromPrice } from "../utils/amounts.js";
@@ -16,7 +17,24 @@ export interface InjectiveHelixAdapterConfig {
   feeBps?: number;
   /** Max orderbook levels to sum when estimating depth. */
   maxDepthLevels?: number;
+  /** Per-fetch timeout in ms (the live Helix REST host can be slow / unreachable). */
+  fetchTimeoutMs?: number;
+  /** Optional mid-price lookup (e.g. live Pyth cache) used by the mock fallback. */
+  getMidPrice?: (pairSymbol: string) => number | undefined;
+  /** Deterministic Injective premium used by the mock fallback, in bps. */
+  mockFallbackOffsetBps?: number;
+  mockBidSpreadBps?: number;
+  mockAskSpreadBps?: number;
+  mockLiquidityUsd?: number;
 }
+
+/** Last-resort reference USD prices for the mock fallback (only used if getMidPrice misses). */
+const REFERENCE_USD: Record<string, number> = {
+  BTC: 64_000,
+  ETH: 3_500,
+  INJ: 25,
+  SOL: 190,
+};
 
 interface HelixOrderbookLevel {
   price: string;
@@ -41,17 +59,30 @@ interface HelixOrderbookResponse {
  */
 export class InjectiveHelixAdapter implements DexAdapter {
   readonly source = "injective_helix" as const;
+  private readonly logger = new Logger("InjectiveHelixAdapter");
 
   private readonly apiBaseUrl: string;
   private readonly feeBps: number;
   private readonly maxDepthLevels: number;
   private readonly markets: Record<string, InjectiveHelixMarket>;
+  private readonly fetchTimeoutMs: number;
+  private readonly getMidPrice?: (pairSymbol: string) => number | undefined;
+  private readonly mockFallbackOffsetBps: number;
+  private readonly mockBidSpreadBps: number;
+  private readonly mockAskSpreadBps: number;
+  private readonly mockLiquidityUsd: number;
 
   constructor(config: InjectiveHelixAdapterConfig) {
     this.apiBaseUrl = config.apiBaseUrl ?? "https://api.injective.exchange";
     this.feeBps = config.feeBps ?? 10;
     this.maxDepthLevels = config.maxDepthLevels ?? 8;
     this.markets = config.markets;
+    this.fetchTimeoutMs = config.fetchTimeoutMs ?? 2_000;
+    this.getMidPrice = config.getMidPrice;
+    this.mockFallbackOffsetBps = config.mockFallbackOffsetBps ?? 40;
+    this.mockBidSpreadBps = config.mockBidSpreadBps ?? 12;
+    this.mockAskSpreadBps = config.mockAskSpreadBps ?? 14;
+    this.mockLiquidityUsd = config.mockLiquidityUsd ?? 1_500_000;
   }
 
   async quote(request: DexQuoteRequest): Promise<DexQuote[]> {
@@ -67,36 +98,101 @@ export class InjectiveHelixAdapter implements DexAdapter {
         : `/api/exchange/v2/spot/orderbook?marketId=${encodeURIComponent(market.marketId)}`;
     const url = new URL(path, this.apiBaseUrl).toString();
 
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) {
-      throw new Error(`Injective Helix orderbook request failed: ${response.status} ${response.statusText}`);
-    }
-    const payload = (await response.json()) as HelixOrderbookResponse;
-    const orderbook = payload.orderbook;
-    if (!orderbook) {
-      return [];
-    }
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.fetchTimeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(url, { method: "GET", signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!response.ok) {
+        throw new Error(`Injective Helix orderbook request failed: ${response.status} ${response.statusText}`);
+      }
+      const payload = (await response.json()) as HelixOrderbookResponse;
+      const orderbook = payload.orderbook;
+      if (!orderbook) {
+        return [];
+      }
 
-    const levels = request.side === "bid" ? orderbook.buys ?? [] : orderbook.sells ?? [];
-    if (levels.length === 0) {
-      return [];
+      const levels = request.side === "bid" ? orderbook.buys ?? [] : orderbook.sells ?? [];
+      if (levels.length === 0) {
+        return [];
+      }
+
+      const sorted = [...levels].sort((a, b) => {
+        const pa = Number(a.price);
+        const pb = Number(b.price);
+        return request.side === "bid" ? pb - pa : pa - pb;
+      });
+
+      const top = sorted[0];
+      const executablePrice = Number(top.price);
+      if (!Number.isFinite(executablePrice) || executablePrice <= 0) {
+        return [];
+      }
+
+      const outAmount = outputAmountFromPrice(request, executablePrice);
+      const { inputMint, outputMint } = inputOutputForSide(request.pair, request.side);
+      const liquidityUsd = sumDepthUsd(sorted, this.maxDepthLevels, executablePrice, request);
+
+      return [
+        {
+          source: this.source,
+          chain: "injective",
+          side: request.side,
+          pair: request.pair.symbol,
+          inputMint,
+          outputMint,
+          inAmount: request.amountIn,
+          outAmount,
+          price: executablePrice,
+          feeBps: this.feeBps,
+          liquidityUsd,
+          priceImpactBps: 0,
+          latencyMs: Date.now() - started,
+          routeId: `injective_helix:${market.marketId}:${request.side}`,
+          receivedAt: Date.now(),
+          raw: { marketId: market.marketId, marketType: market.type, top },
+        },
+      ];
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Helix fetch failed for ${request.pair.symbol} (${market.marketId}); using mock fallback: ${reason}`,
+      );
+      return this.mockQuote(request, market, started);
     }
+  }
 
-    const sorted = [...levels].sort((a, b) => {
-      const pa = Number(a.price);
-      const pb = Number(b.price);
-      return request.side === "bid" ? pb - pa : pa - pb;
-    });
-
-    const top = sorted[0];
-    const executablePrice = Number(top.price);
+  /**
+   * Deterministic fallback used when the live Helix REST endpoint is unreachable
+   * (the public REST host is flaky / deprecated; real data needs the gRPC indexer).
+   * Tracks the live oracle mid when a getMidPrice provider is wired, plus a small
+   * fixed Injective premium so the cross-chain nBBO and arb scan stay meaningful.
+   */
+  private mockQuote(
+    request: DexQuoteRequest,
+    market: InjectiveHelixMarket,
+    started: number,
+  ): DexQuote[] {
+    const base = request.pair.base.symbol;
+    const refMid =
+      this.getMidPrice?.(request.pair.symbol) ??
+      REFERENCE_USD[base] ??
+      100;
+    const offset = 1 + this.mockFallbackOffsetBps / 10_000;
+    const mid = refMid * offset;
+    const spreadBps = request.side === "bid" ? this.mockBidSpreadBps : this.mockAskSpreadBps;
+    const sideMultiplier = request.side === "bid" ? 1 - spreadBps / 10_000 : 1 + spreadBps / 10_000;
+    const executablePrice = mid * sideMultiplier;
     if (!Number.isFinite(executablePrice) || executablePrice <= 0) {
       return [];
     }
 
     const outAmount = outputAmountFromPrice(request, executablePrice);
     const { inputMint, outputMint } = inputOutputForSide(request.pair, request.side);
-    const liquidityUsd = sumDepthUsd(sorted, this.maxDepthLevels, executablePrice, request);
 
     return [
       {
@@ -110,13 +206,13 @@ export class InjectiveHelixAdapter implements DexAdapter {
         outAmount,
         price: executablePrice,
         feeBps: this.feeBps,
-        liquidityUsd,
+        liquidityUsd: this.mockLiquidityUsd,
         priceImpactBps: 0,
         latencyMs: Date.now() - started,
-        routeId: `injective_helix:${market.marketId}:${request.side}`,
+        routeId: `injective_helix:mock:${market.marketId}:${request.side}`,
         receivedAt: Date.now(),
-        raw: { marketId: market.marketId, marketType: market.type, top }
-      }
+        raw: { marketId: market.marketId, marketType: market.type, mock: true },
+      },
     ];
   }
 

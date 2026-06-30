@@ -23,7 +23,7 @@ import { OracleMockAdapter } from '../dex/oracle-mock-adapter.js';
 import { OrcaWhirlpoolOrderBookAdapter } from '../dex/orca-adapter.js';
 import { RaydiumOrderBookAdapter } from '../dex/raydium-adapter.js';
 import { NbboEngine } from '../nbbo/engine.js';
-import { PythPriceFeedService, type PriceFeedSubscriber, type PriceFeedSubscription } from '../oracle/pyth-price-feed.js';
+import { PythPriceFeedService, MockPythPriceFeedService, type PriceFeedSubscriber, type PriceFeedSubscription } from '../oracle/pyth-price-feed.js';
 import { RiskEngine } from '../risk/risk-engine.js';
 import { CrossChainArbStrategy, type CrossChainArbOptions, type CrossChainArbSignal } from '../strategy/strategies/cross-chain-arb.strategy.js';
 import { JupiterTransactionBuilder } from '../transactions/jupiter-transaction-builder.js';
@@ -45,6 +45,7 @@ import type {
   TradeIntent,
 } from '../types.js';
 import { applyBps, toNativeAmount } from '../utils/amounts.js';
+import { withTimeout } from '../utils/async.js';
 import {
   PrepareTradeDto,
   PrepareTradeDtoSchema,
@@ -64,6 +65,65 @@ export interface MarketNbboQuery {
   bidBaseAmount?: number | string;
   askQuoteAmount?: number | string;
   slippageBps?: number;
+}
+
+/** Last-resort reference USD prices used when the live Pyth feed is unreachable. */
+const REFERENCE_USD: Record<string, number> = {
+  BTC: 64_000,
+  ETH: 3_500,
+  INJ: 25,
+  SOL: 190,
+};
+
+/** Deterministic Injective premium (bps) so the cross-chain nBBO + arb scan stay meaningful in mock mode. */
+const INJECTIVE_MOCK_OFFSET_BPS = 60;
+
+function referencePriceFor(pair: TokenPair): number {
+  return REFERENCE_USD[pair.base.symbol] ?? 100;
+}
+
+function buildMockPythPrices(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const pair of Object.values(ALL_PAIRS)) {
+    out[pair.symbol] = referencePriceFor(pair);
+  }
+  return out;
+}
+
+/**
+ * Wraps the Pyth price feed so that a transient Hermes REST failure (the
+ * `fetch failed` that crashes prepareTrade) falls back to the in-memory
+ * priceCache warmed by the SSE subscription. The cache is keyed by symbol and
+ * refreshed on every price tick, so the fallback stays fresh.
+ */
+class CachedFallbackPriceFeed implements PriceFeedSubscriber {
+  constructor(
+    private readonly inner: PriceFeedSubscriber,
+    private readonly cache: Map<string, PriceUpdate>,
+  ) {}
+
+  async getLatest(pairs: TokenPair[]): Promise<Map<string, PriceUpdate>> {
+    try {
+      return await this.inner.getLatest(pairs);
+    } catch (error) {
+      const out = new Map<string, PriceUpdate>();
+      for (const pair of pairs) {
+        const cached = this.cache.get(pair.symbol);
+        if (!cached) {
+          throw error;
+        }
+        out.set(pair.symbol, cached);
+      }
+      return out;
+    }
+  }
+
+  subscribe(
+    pairs: TokenPair[],
+    onUpdate: (update: PriceUpdate) => void,
+  ): Promise<PriceFeedSubscription> {
+    return this.inner.subscribe(pairs, onUpdate);
+  }
 }
 
 @Injectable()
@@ -87,7 +147,7 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     private readonly arbStrategy: CrossChainArbStrategy,
   ) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     const cfg = this.configService.realtime;
     const injCfg = this.configService.injective;
     const allowedDexes: RiskPolicy['allowedDexes'] = cfg.enableRealDex
@@ -114,6 +174,29 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       maxConfidenceBps: cfg.pythMaxConfidenceBps,
     });
 
+    // PYTH_USE_MOCK forces a deterministic mock price feed (clean reference
+    // prices). Otherwise probe the live Pyth Hermes endpoint; some networks
+    // block Node's TLS handshake to hermes.pyth.network (curl works, Node fetch
+    // doesn't), so fall back to mock to keep prepareTrade from crashing on
+    // `fetch failed`.
+    if (cfg.pythUseMock) {
+      this.logger.log('PYTH_USE_MOCK=true — using mock price feed (deterministic reference prices).');
+      this.priceFeed = new MockPythPriceFeedService(buildMockPythPrices());
+    } else {
+      try {
+        await withTimeout(
+          this.priceFeed.getLatest(Object.values(ALL_PAIRS)),
+          4_000,
+          'pyth probe',
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Pyth Hermes unreachable (${(error as Error).message}); using mock price feed (deterministic reference prices).`,
+        );
+        this.priceFeed = new MockPythPriceFeedService(buildMockPythPrices());
+      }
+    }
+
     const adapters: DexAdapter[] = cfg.enableRealDex
       ? this.buildLiveAdapters()
       : [
@@ -137,7 +220,7 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.core = new RealTimeAgentCore({
-      priceFeed: this.priceFeed,
+      priceFeed: new CachedFallbackPriceFeed(this.priceFeed, this.priceCache),
       aggregator: this.aggregator,
       nbbo: this.nbbo,
       risk: new RiskEngine(),
@@ -191,12 +274,23 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     const dto = PrepareTradeDtoSchema.parse(input) as PrepareTradeDto;
     const cfg = this.configService.realtime;
     const maxSlippageBps = dto.maxSlippageBps ?? cfg.maxSlippageBps;
+    // amountIn may arrive as native units (frontend) or a decimal string (MCP tool).
+    // Native integer strings convert directly; decimals fall back to decimal->native
+    // using the input token's decimals (sell spends base, buy spends quote).
+    const pair = getTokenPair(dto.pair);
+    const inputDecimals = dto.side === 'sell' ? pair.base.decimals : pair.quote.decimals;
+    let amountInNative: bigint;
+    try {
+      amountInNative = BigInt(String(dto.amountIn));
+    } catch {
+      amountInNative = toNativeAmount(String(dto.amountIn), inputDecimals);
+    }
     const tradeRecord = await this.tradeRepo.createTrade({
       intentId: dto.id,
       userPubkey: dto.user,
       pair: dto.pair,
       side: dto.side,
-      amountIn: BigInt(dto.amountIn.toString()),
+      amountIn: amountInNative,
       maxSlippageBps,
     });
 
@@ -222,6 +316,7 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     try {
       const plan = await this.core.prepareTrade({
         ...dto,
+        amountIn: amountInNative,
         maxSlippageBps,
       });
       await this.tradeRepo.attachPlan({ tradeId: tradeRecord.id, plan });
@@ -318,7 +413,14 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     const slippageBps = query.slippageBps ?? 100;
 
     if (!this.configService.realtime.enableRealDex) {
-      const mid = Number(query.mockMid ?? 160);
+      // Pair-aware mid: reference USD price per base asset, with a fixed
+      // Injective premium so the cross-chain nBBO + arb scan stay meaningful
+      // (and the arb strategy can actually emit signals above bridge cost).
+      const refMid = Number(query.mockMid ?? referencePriceFor(pair));
+      const mid =
+        pair.chain === 'injective'
+          ? refMid * (1 + INJECTIVE_MOCK_OFFSET_BPS / 10_000)
+          : refMid;
       const aggregator = new DexOrderBookAggregator([
         new MockDexAdapter({
           source: 'mock',
@@ -410,6 +512,8 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     return new InjectiveHelixAdapter({
       markets,
       apiBaseUrl: injCfg.exchangeApi,
+      getMidPrice: (symbol) => this.priceCache.get(symbol)?.price,
+      mockFallbackOffsetBps: INJECTIVE_MOCK_OFFSET_BPS,
     });
   }
 
