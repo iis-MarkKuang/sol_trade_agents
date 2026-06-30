@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '../config/config.service';
 import { DEFAULT_PAIRS } from '../config/tokens.js';
+import { CrossChainArbStrategy } from '../strategy/strategies/cross-chain-arb.strategy.js';
 import { toNativeAmount } from '../utils/amounts.js';
 import { RealtimeGateway } from './realtime.gateway';
 import { RealtimeService } from './realtime.service';
@@ -24,6 +25,14 @@ class StubConfigService {
     maxQuoteAgeMs: 5_000,
     dexQuoteTimeoutMs: 2_500,
     retries: 0,
+  };
+  injective = {
+    enabled: false,
+    network: 'testnet' as const,
+    exchangeApi: 'https://api.injective.exchange',
+    mcpBin: 'npx -y @injectivelabs/mcp-server',
+    mnemonic: undefined,
+    helixMarkets: undefined,
   };
 }
 
@@ -100,6 +109,7 @@ describe('RealtimeService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RealtimeService,
+        CrossChainArbStrategy,
         { provide: ConfigService, useClass: StubConfigService },
         { provide: RealtimeTradeRepository, useClass: StubTradeRepository },
         { provide: RealtimeGateway, useClass: StubGateway },
@@ -135,6 +145,7 @@ describe('RealtimeService', () => {
           bestBid: undefined,
           bestAsk: {
             source: 'mock',
+            chain: 'solana',
             side: 'ask',
             pair: 'SOL/USDC',
             inputMint: 'usdc',
@@ -160,6 +171,7 @@ describe('RealtimeService', () => {
           side: 'ask',
           quote: {
             source: 'mock',
+            chain: 'solana',
             side: 'ask',
             pair: 'SOL/USDC',
             inputMint: 'usdc',

@@ -1,5 +1,5 @@
 import { Decimal } from "decimal.js";
-import type { DexQuoteRequest, QuoteSide, TokenPair } from "../types.js";
+import type { ChainId, DexQuoteRequest, QuoteSide, TokenInfo, TokenPair } from "../types.js";
 
 const TEN = new Decimal(10);
 
@@ -19,19 +19,27 @@ export function inputOutputForSide(pair: TokenPair, side: QuoteSide): {
 } {
   if (side === "bid") {
     return {
-      inputMint: pair.base.mint,
-      outputMint: pair.quote.mint,
+      inputMint: pair.base.mint ?? pair.base.denom ?? pair.base.symbol,
+      outputMint: pair.quote.mint ?? pair.quote.denom ?? pair.quote.symbol,
       inputDecimals: pair.base.decimals,
       outputDecimals: pair.quote.decimals
     };
   }
 
   return {
-    inputMint: pair.quote.mint,
-    outputMint: pair.base.mint,
+    inputMint: pair.quote.mint ?? pair.quote.denom ?? pair.quote.symbol,
+    outputMint: pair.base.mint ?? pair.base.denom ?? pair.base.symbol,
     inputDecimals: pair.quote.decimals,
     outputDecimals: pair.base.decimals
   };
+}
+
+/** Resolve the on-chain identifier (mint or denom) for a token on a given chain. */
+export function tokenChainId(token: TokenInfo, chain: ChainId): string {
+  if (chain === "injective") {
+    return token.denom ?? token.symbol;
+  }
+  return token.mint ?? token.symbol;
 }
 
 export function calculatePairPrice(request: DexQuoteRequest, outAmount: bigint): number {

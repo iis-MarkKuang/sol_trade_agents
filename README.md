@@ -1,6 +1,8 @@
 # Solana Frontier Web3 LLM Trading Agent
 
-A Web3 LLM agent platform for autonomous Solana trading, similar to b.ai, combining AI-driven insights, real-time market data, and on-chain execution.
+A Web3 LLM agent platform for autonomous Solana trading, similar to b.ai, combining AI-driven market insights, real-time nBBO execution, and **Injective cross-chain arbitrage** (Nova Program).
+
+> **Need to run or deploy this?** See [`docs/MANUAL.md`](docs/MANUAL.md) — local startup + Azure demo website deployment.
 
 ---
 
@@ -290,3 +292,127 @@ npm run test:all          # Run both Jest and Vitest
 | **Real-time** | Socket.IO |
 | **Frontend** | Vite + React 18 + TypeScript + Tailwind CSS + Zustand + Socket.IO client |
 | **Smart Contracts** | Anchor Framework + Jupiter (Solana) |
+
+---
+
+## 🌌 Injective Integration (Nova Program)
+
+This project is being extended for the **Injective Nova Program** (Injective × Microsoft × Web3Labs) — turning the Solana-only agent into a **Solana ↔ Injective cross-chain AI quant assistant**. It targets the *Agent infrastructure* and *Open innovation* directions.
+
+### Design
+
+The realtime agent is now chain-agnostic: the `DexOrderBookAggregator` fans out to both Solana DEX adapters (Jupiter/Raydium/Orca) **and** an Injective Helix adapter, producing a single cross-chain nBBO. When the winning route lives on Injective, `RealTimeAgentCore` emits an `injectiveExecutionPlan`; a dedicated executor hands it to the official **Injective MCP server** for real signing/broadcast.
+
+```mermaid
+flowchart LR
+    Pyth["Pyth (shared oracle)"] --> Core["RealTimeAgentCore"]
+    Sol["Solana DEX adapters"] --> Agg["Aggregator"]
+    Inj["Injective Helix adapter"] --> Agg
+    Agg --> NBBO["nBBO (cross-chain)"]
+    NBBO --> Core
+    Core -->|chain=solana| SolTx["Jupiter tx (mock)"]
+    Core -->|chain=injective| MCP["Injective MCP Server"]
+    Arb["CrossChainArbStrategy"] --> NL["NL Agent (LangChain tools)"]
+    NL --> MCP
+```
+
+### What was added
+
+| Area | Files |
+|------|-------|
+| Chain abstraction | `backend/src/types.ts` (`DexSource`/`DexQuote.chain`/`TokenPair.chain`), `backend/src/utils/amounts.ts` |
+| Injective token registry | `backend/src/config/tokens.ts` (INJ/USDC/USDT denoms + Helix markets + BTC/ETH perps) |
+| Helix market data | `backend/src/dex/injective-helix-adapter.ts` (REST orderbook → `DexAdapter`) |
+| Shared oracle | `backend/src/oracle/injective-pyth-adapter.ts` (Injective pairs reuse Pyth Hermes) |
+| MCP execution | `backend/src/transactions/injective-mcp-client.ts` (stdio JSON-RPC client + mock executor) |
+| Cross-chain arb | `backend/src/strategy/strategies/cross-chain-arb.strategy.ts` |
+| NL quant assistant | `backend/src/realtime/cross-chain-agent.service.ts` (LangChain `query_cross_chain_nbbo` + `propose_arb_plan` tools) |
+| Agent identity (ERC-8004) | `backend/src/agent/injective-agent-identity.service.ts`, `injective-registry.viem.ts`, `injective-agent-identity.types.ts`, `agent-identity.controller.ts`, `agent-identity.module.ts` |
+| Exposed MCP server | `backend/src/realtime/agent-mcp-server.service.ts`, `agent-mcp.controller.ts` (`POST /mcp`, Streamable HTTP) |
+| Wiring + API | `backend/src/realtime/realtime.service.ts`, `realtime.controller.ts`, `realtime.module.ts` |
+| Frontend | `frontend/src/pages/LiveTradingPage.tsx`, `InsightsPage.tsx`, `lib/api.ts` |
+
+### New REST endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/realtime/cross-chain/arb` | Scan BTC/ETH spreads across Solana & Injective |
+| `POST` | `/realtime/cross-chain/plan` | Natural-language cross-chain plan via LangChain tools |
+| `POST` | `/realtime/trade/injective-execute` | Execute a prepared Injective plan via the MCP server |
+| `GET` | `/agent/identity` | Our agent's ERC-8004 identity card (real or simulated) |
+| `GET` | `/agent/registry` | Browse the Injective Agent Registry (live scan or samples) |
+| `POST` | `/mcp` | **MCP server endpoint** we expose (Streamable HTTP) — tools below |
+
+### Injective Agent Identity (ERC-8004) + our own MCP server
+
+Beyond *consuming* the official Injective MCP server for execution, the agent now participates in the Injective agent stack as a first-class citizen:
+
+- **On-chain identity** — `backend/src/agent/injective-agent-identity.service.ts` + `injective-registry.viem.ts` talk directly to the canonical Injective Identity Registry (ERC-8004) via `viem` (read-only). Set `INJECTIVE_AGENT_ID` to fetch our agent's real on-chain card; otherwise a deterministic simulated card is returned. Set `INJECTIVE_AGENT_REGISTRY_ENABLED=true` for a live bounded scan of registered agents (falls back to clearly-labelled samples).
+- **Agent Card** — our card declares `services` including our own MCP endpoint (`MCP_PUBLIC_URL`), so the agent is discoverable with capabilities on [agents.injective.com](https://agents.injective.com).
+- **We expose an MCP server** — `backend/src/realtime/agent-mcp-server.service.ts` mounts a standards-compliant MCP endpoint at `POST /mcp` (Streamable HTTP, via `@modelcontextprotocol/sdk`) with four tools:
+  - `query_cross_chain_nbbo` — live nBBO for a pair across Solana + Injective
+  - `propose_arb_plan` — cross-chain arbitrage scan
+  - `execute_injective_trade` — prepare + execute an Injective Helix trade
+  - `get_agent_identity` — our ERC-8004 identity card
+
+This makes the story bidirectional: our agent **calls** the Injective MCP server to trade, **and** is itself an on-chain registered agent that **exposes** an MCP server other agents can call.
+
+### Injective environment variables
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `ENABLE_INJECTIVE` | `false` | Register the Helix adapter + Injective executor |
+| `INJECTIVE_NETWORK` | `testnet` | `testnet` or `mainnet` (passed to the MCP server) |
+| `INJECTIVE_EXCHANGE_API` | `https://api.injective.exchange` | Helix public REST base URL |
+| `INJECTIVE_MCP_BIN` | `npx -y @injectivelabs/mcp-server` | Command used to spawn the official MCP server (stdio) |
+| `INJECTIVE_MNEMONIC` | _(empty)_ | Injective account mnemonic for MCP signing. Empty → `MockInjectiveTradeExecutor` (simulated tx hashes) |
+| `INJECTIVE_HELI_MARKETS` | _(empty)_ | Optional overrides, e.g. `INJ/USDC=INJ/USDC:spot,BTC/USDT=BTC/USDT:derivative` |
+
+### LLM provider (Azure OpenAI for Nova credits)
+
+The NL quant assistant and offline LLM agent share a single factory (`backend/src/agents/llm-factory.ts`) that supports both the public OpenAI API and **Azure OpenAI Service**, so you can spend the Nova Program's Microsoft Azure credits instead of your own OpenAI quota.
+
+| Env Var | When | Description |
+|---------|------|-------------|
+| `LLM_PROVIDER` | optional | `azure` or `openai`. Auto-detects: Azure wins if `AZURE_OPENAI_API_KEY` is set. |
+| `AZURE_OPENAI_API_KEY` | Azure | Azure OpenAI resource key |
+| `AZURE_OPENAI_API_INSTANCE_NAME` | Azure | Azure resource name |
+| `AZURE_OPENAI_API_DEPLOYMENT_NAME` | Azure | Deployment name (e.g. `gpt-4o-mini`) |
+| `AZURE_OPENAI_API_VERSION` | Azure | API version, default `2024-08-01-preview` |
+| `AZURE_OPENAI_BASE_PATH` | Azure | Optional custom endpoint |
+| `OPENAI_API_KEY` | OpenAI | Public OpenAI API key |
+| `OPENAI_BASE_URL` | OpenAI | Optional custom base URL (e.g. proxy) |
+| `LLM_MODEL` | OpenAI | Model name, default `gpt-4o-mini` |
+
+When neither Azure nor OpenAI credentials are present, both services fall back to deterministic/mock output so the demo still runs end-to-end.
+
+### Run the Injective-enabled demo
+
+```bash
+# 1. Backend with Injective enabled (testnet, simulated execution)
+cd backend
+ENABLE_INJECTIVE=true INJECTIVE_NETWORK=testnet npm run start:dev
+
+# 2. Real signing via the official MCP server (advanced)
+ENABLE_INJECTIVE=true INJECTIVE_NETWORK=testnet \
+INJECTIVE_MNEMONIC="your testnet mnemonic" \
+npm run start:dev
+
+# 3. Use Nova Azure OpenAI credits for the NL agent
+LLM_PROVIDER=azure \
+AZURE_OPENAI_API_KEY="..." \
+AZURE_OPENAI_API_INSTANCE_NAME="my-resource" \
+AZURE_OPENAI_API_DEPLOYMENT_NAME="gpt-4o-mini" \
+ENABLE_INJECTIVE=true npm run start:dev
+```
+
+With `ENABLE_INJECTIVE=true` and no mnemonic, the Helix adapter fetches **real** Injective orderbooks and trades are simulated by `MockInjectiveTradeExecutor` — safe for demos. Set `INJECTIVE_MNEMONIC` to let the spawned [Injective MCP server](https://github.com/InjectiveLabs/mcp-server) sign and broadcast real testnet orders.
+
+### Nova Program compliance checklist
+
+- [x] Deploys/integrates with Injective (Helix market data + MCP execution)
+- [x] Open-source codebase (this repo)
+- [ ] ≤ 3 minute demo video
+- [ ] Pitch deck
+- [ ] Register at [injectivenova.com](https://injectivenova.com) (recruitment window May 21 – Jun 30)
+- [ ] Attend offline Demo Day (finalists)

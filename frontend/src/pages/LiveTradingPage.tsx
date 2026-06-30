@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   realtimeApi,
+  agentIdentityApi,
+  type AgentIdentity,
+  type CrossChainArbSignal,
+  type CrossChainPlanResponse,
   type NbboSnapshot,
   type PreparedTradeResponse,
+  type RegistryList,
   type TradeRecord
 } from "../lib/api";
 import {
@@ -15,7 +20,20 @@ import {
 } from "../lib/format";
 import { subscribeToPrices, subscribeToTrade, useSocketStore } from "../lib/websocket";
 
-const PAIRS = ["SOL/USDC", "BTC/USDC", "ETH/USDC"];
+const PAIRS = [
+  { symbol: "SOL/USDC", chain: "solana" as const },
+  { symbol: "BTC/USDC", chain: "solana" as const },
+  { symbol: "ETH/USDC", chain: "solana" as const },
+  { symbol: "INJ/USDC", chain: "injective" as const },
+  { symbol: "INJ/USDT", chain: "injective" as const },
+  { symbol: "BTC/USDT", chain: "injective" as const },
+  { symbol: "ETH/USDT", chain: "injective" as const }
+];
+
+const PAIR_SYMBOLS = PAIRS.map((p) => p.symbol);
+const CHAIN_BY_PAIR: Record<string, "solana" | "injective"> = Object.fromEntries(
+  PAIRS.map((p) => [p.symbol, p.chain])
+);
 
 export function LiveTradingPage() {
   const [pair, setPair] = useState("SOL/USDC");
@@ -29,13 +47,22 @@ export function LiveTradingPage() {
   const [confirming, setConfirming] = useState(false);
   const [lastPrepared, setLastPrepared] = useState<PreparedTradeResponse | null>(null);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
+  const [arbSignals, setArbSignals] = useState<CrossChainArbSignal[]>([]);
+  const [arbLoading, setArbLoading] = useState(false);
+  const [nlPrompt, setNlPrompt] = useState("Find BTC and ETH arbitrage between Solana and Injective");
+  const [nlPlan, setNlPlan] = useState<CrossChainPlanResponse | null>(null);
+  const [nlLoading, setNlLoading] = useState(false);
+  const [injectiveExecuting, setInjectiveExecuting] = useState(false);
+  const [identity, setIdentity] = useState<AgentIdentity | null>(null);
+  const [registry, setRegistry] = useState<RegistryList | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const tradeEvents = useSocketStore((state) => state.tradeEvents);
   const prices = useSocketStore((state) => state.prices);
 
   useEffect(() => {
-    subscribeToPrices(PAIRS);
+    subscribeToPrices(PAIR_SYMBOLS);
   }, []);
 
   const refreshTrades = useCallback(async () => {
@@ -60,10 +87,41 @@ export function LiveTradingPage() {
     }
   }, [pair]);
 
+  const refreshArb = useCallback(async () => {
+    setArbLoading(true);
+    try {
+      const { data } = await realtimeApi.crossChainArb({ notionalUsd: 1000, minNetEdgeBps: 30 });
+      setArbSignals(data.signals);
+    } catch (err) {
+      // Arb scan is best-effort; silently ignore network errors in demo mode.
+      console.warn("cross-chain arb failed", err);
+    } finally {
+      setArbLoading(false);
+    }
+  }, []);
+
+  const refreshIdentity = useCallback(async () => {
+    setIdentityLoading(true);
+    try {
+      const [id, reg] = await Promise.all([
+        agentIdentityApi.identity(),
+        agentIdentityApi.registry(0, 20)
+      ]);
+      setIdentity(id.data);
+      setRegistry(reg.data);
+    } catch (err) {
+      console.warn("agent identity load failed", err);
+    } finally {
+      setIdentityLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     refreshNbbo();
     refreshTrades();
-  }, [refreshNbbo, refreshTrades]);
+    refreshArb();
+    refreshIdentity();
+  }, [refreshNbbo, refreshTrades, refreshArb, refreshIdentity]);
 
   // When a trade lifecycle event arrives, refresh trade history.
   useEffect(() => {
@@ -74,7 +132,15 @@ export function LiveTradingPage() {
   const livePrice = prices[pair];
 
   const decimalsForAmount = useMemo(() => {
-    return side === "buy" ? 6 : pair.startsWith("SOL/") ? 9 : 8;
+    if (side === "buy") {
+      // quote token decimals
+      if (pair.endsWith("/USDT")) return 6;
+      return 6; // USDC/USDT both 6
+    }
+    // sell -> base token decimals
+    if (pair.startsWith("SOL/")) return 9;
+    if (pair.startsWith("INJ/")) return 18;
+    return 8; // BTC/ETH
   }, [pair, side]);
 
   const handlePrepare = async () => {
@@ -126,8 +192,50 @@ export function LiveTradingPage() {
     }
   };
 
+  const handleNlPlan = async () => {
+    if (!nlPrompt.trim()) return;
+    setNlLoading(true);
+    setError(null);
+    try {
+      const { data } = await realtimeApi.crossChainPlan({
+        prompt: nlPrompt,
+        notionalUsd: 1000,
+        minNetEdgeBps: 30
+      });
+      setNlPlan(data);
+      setArbSignals(data.signals);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(extractApiMessage(message, err));
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const handleInjectiveExecute = async () => {
+    if (!lastPrepared?.plan.injectiveExecutionPlan) return;
+    setInjectiveExecuting(true);
+    setError(null);
+    try {
+      await realtimeApi.executeInjective(lastPrepared.tradeId);
+      await refreshTrades();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(extractApiMessage(message, err));
+    } finally {
+      setInjectiveExecuting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <AgentIdentitySection
+        identity={identity}
+        registry={registry}
+        loading={identityLoading}
+        onRefresh={refreshIdentity}
+      />
+
       <section className="grid gap-4 md:grid-cols-4">
         <StatCard
           label={`Oracle ${pair}`}
@@ -138,12 +246,12 @@ export function LiveTradingPage() {
         <StatCard
           label="Best Bid"
           value={snapshot?.bestBid ? formatUsd(snapshot.bestBid.price) : "—"}
-          hint={snapshot?.bestBid ? snapshot.bestBid.source.toUpperCase() : undefined}
+          hint={snapshot?.bestBid ? `${snapshot.bestBid.source.toUpperCase()} · ${chainLabel(snapshot.bestBid.chain)}` : undefined}
         />
         <StatCard
           label="Best Ask"
           value={snapshot?.bestAsk ? formatUsd(snapshot.bestAsk.price) : "—"}
-          hint={snapshot?.bestAsk ? snapshot.bestAsk.source.toUpperCase() : undefined}
+          hint={snapshot?.bestAsk ? `${snapshot.bestAsk.source.toUpperCase()} · ${chainLabel(snapshot.bestAsk.chain)}` : undefined}
         />
         <StatCard
           label="Spread"
@@ -165,8 +273,8 @@ export function LiveTradingPage() {
                 <label className="label">Pair</label>
                 <select className="select" value={pair} onChange={(e) => setPair(e.target.value)}>
                   {PAIRS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
+                    <option key={p.symbol} value={p.symbol}>
+                      {p.symbol} · {p.chain === "injective" ? "Injective Helix" : "Solana DEX"}
                     </option>
                   ))}
                 </select>
@@ -255,6 +363,8 @@ export function LiveTradingPage() {
               prepared={lastPrepared}
               onConfirm={handleConfirm}
               confirming={confirming}
+              onInjectiveExecute={handleInjectiveExecute}
+              injectiveExecuting={injectiveExecuting}
             />
           )}
         </section>
@@ -311,6 +421,83 @@ export function LiveTradingPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <section className="card">
+          <SectionHeader
+            title="Cross-Chain Arbitrage Scanner"
+            subtitle="Solana ↔ Injective spread detection (BTC, ETH)"
+          />
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs text-slate-400">
+              Scans shared assets across both chains and flags net edge after bridge cost.
+            </p>
+            <button onClick={refreshArb} className="btn-secondary text-xs" disabled={arbLoading}>
+              {arbLoading ? "Scanning…" : "Rescan"}
+            </button>
+          </div>
+          {arbSignals.length === 0 ? (
+            <Empty text="No actionable cross-chain arb right now (spreads within bridge tolerance)." />
+          ) : (
+            <ul className="space-y-2">
+              {arbSignals.map((s) => (
+                <li
+                  key={s.asset}
+                  className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-3 text-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-100">{s.asset}</span>
+                    <span className="text-xs text-emerald-300">
+                      net {formatBps(s.netEdgeBps)}
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                    <Stat label="Solana mid" value={formatUsd(s.solanaMid)} />
+                    <Stat label="Injective mid" value={formatUsd(s.injectiveMid)} />
+                    <Stat label="Spread" value={formatBps(s.spreadBps)} />
+                    <Stat label="Bridge cost" value={formatBps(s.bridgeCostBps)} />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Buy on <span className="text-emerald-300">{s.buyChain}</span>, sell on{" "}
+                    <span className="text-rose-300">{s.sellChain}</span> · {s.bridgePath}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="mt-5 border-t border-slate-800 pt-4">
+            <SectionHeader
+              title="Natural-Language Quant Assistant"
+              subtitle="Ask the AI agent to scan & propose a cross-chain plan (Injective MCP narrative)"
+            />
+            <div className="flex gap-2">
+              <input
+                className="input"
+                value={nlPrompt}
+                onChange={(e) => setNlPrompt(e.target.value)}
+                placeholder="e.g. Find BTC arbitrage between Solana and Injective"
+              />
+              <button
+                onClick={handleNlPlan}
+                disabled={nlLoading || !nlPrompt.trim()}
+                className="btn-primary whitespace-nowrap text-xs"
+              >
+                {nlLoading ? "Thinking…" : "Ask Agent"}
+              </button>
+            </div>
+            {nlPlan && (
+              <div className="mt-3 rounded-xl border border-violet-500/20 bg-violet-500/5 p-3 text-xs text-slate-200">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="font-semibold text-violet-200">Agent plan</span>
+                  <span className="text-slate-500">
+                    {nlPlan.llmUsed ? `LLM · ${nlPlan.toolCallCount} tool call(s)` : "deterministic fallback"}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap text-slate-300">{nlPlan.analysis}</p>
+              </div>
+            )}
+          </div>
+        </section>
+
         <section className="card">
           <SectionHeader title="Trade Event Feed" subtitle="Live WebSocket lifecycle events" />
           {tradeEvents.length === 0 ? (
@@ -388,17 +575,146 @@ export function LiveTradingPage() {
   );
 }
 
+function AgentIdentitySection({
+  identity,
+  registry,
+  loading,
+  onRefresh
+}: {
+  identity: AgentIdentity | null;
+  registry: RegistryList | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="card">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-100">
+            Injective Agent Identity (ERC-8004)
+          </h3>
+          <p className="text-xs text-slate-400">
+            On-chain agent identity on the Injective Agent Registry + our exposed MCP endpoint.
+          </p>
+        </div>
+        <button onClick={onRefresh} className="btn-secondary text-xs" disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+          {identity ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-base font-semibold text-slate-100">{identity.card.name}</span>
+                <span
+                  className={
+                    identity.registered
+                      ? "badge-green"
+                      : identity.simulated
+                        ? "badge-amber"
+                        : "badge-slate"
+                  }
+                >
+                  {identity.registered ? "On-chain" : "Simulated"}
+                </span>
+                <span className="badge-blue">{identity.type}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                <Stat label="Agent ID" value={identity.agentId} />
+                <Stat label="Builder code" value={identity.builderCode} />
+                <Stat label="Network" value={`${identity.network} (chain ${identity.chainId})`} />
+                <Stat label="x402" value={identity.card.x402 ? "enabled" : "off"} />
+              </div>
+              <p className="mt-2 break-all font-mono text-xs text-slate-500">{identity.identityTuple}</p>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                <a
+                  href={identity.scanUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-300 underline decoration-dotted underline-offset-2"
+                >
+                  Registry page ↗
+                </a>
+                <span className="text-slate-500">MCP: <code className="text-slate-300">{identity.mcpEndpoint}</code></span>
+              </div>
+              {identity.card.services.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs uppercase tracking-wider text-slate-400">Services</p>
+                  <ul className="mt-1 space-y-1">
+                    {identity.card.services.map((s, i) => (
+                      <li key={i} className="text-xs text-slate-300">
+                        <span className="badge-slate mr-2">{s.type}</span>
+                        <code className="text-slate-400">{s.endpoint}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-slate-400">Loading agent identity…</p>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs uppercase tracking-wider text-slate-400">Agent Registry</p>
+            <span className={registry?.real ? "badge-green" : "badge-slate"}>
+              {registry?.real ? "Live scan" : "Samples"}
+            </span>
+          </div>
+          {registry?.note && (
+            <p className="mb-2 text-xs text-amber-200">{registry.note}</p>
+          )}
+          {registry && registry.agents.length > 0 ? (
+            <ul className="space-y-2">
+              {registry.agents.map((a) => (
+                <li key={a.agentId} className="rounded-lg border border-slate-800 bg-slate-900/70 p-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-100">{a.name}</span>
+                    <span className="badge-slate">{a.type}</span>
+                  </div>
+                  <div className="mt-1 text-slate-500">
+                    id {a.agentId} · builder <span className="text-slate-300">{a.builderCode || "—"}</span>
+                  </div>
+                  <a
+                    href={a.scanUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sky-300 underline decoration-dotted underline-offset-2"
+                  >
+                    view ↗
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-400">No agents listed.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PreparedSummary({
   prepared,
   onConfirm,
-  confirming
+  confirming,
+  onInjectiveExecute,
+  injectiveExecuting
 }: {
   prepared: PreparedTradeResponse;
   onConfirm: (status: "SUBMITTED" | "CONFIRMED" | "FAILED") => void;
   confirming: boolean;
+  onInjectiveExecute: () => void;
+  injectiveExecuting: boolean;
 }) {
   const route = prepared.plan.selectedRoute?.quote;
   const oracle = prepared.plan.oraclePrice;
+  const injPlan = prepared.plan.injectiveExecutionPlan;
   return (
     <div className="mt-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm">
       <div className="flex items-center justify-between">
@@ -411,7 +727,7 @@ function PreparedSummary({
       </div>
       {route ? (
         <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-200">
-          <Stat label="Selected DEX" value={route.source.toUpperCase()} />
+          <Stat label="Selected DEX" value={`${route.source.toUpperCase()} · ${chainLabel(route.chain)}`} />
           <Stat label="Quote price" value={formatUsd(route.price)} />
           <Stat label="Oracle price" value={formatUsd(oracle?.price)} />
           <Stat label="Liquidity" value={formatCompactUsd(route.liquidityUsd)} />
@@ -422,6 +738,28 @@ function PreparedSummary({
         <p className="mt-2 text-xs text-rose-200">
           {prepared.plan.rejectionReason || "Plan rejected"}
         </p>
+      )}
+
+      {injPlan && (
+        <div className="mt-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-slate-200">
+          <p className="mb-1 font-semibold text-indigo-200">
+            Injective execution plan (via MCP)
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Stat label="Market" value={`${injPlan.marketId} · ${injPlan.marketType}`} />
+            <Stat label="Side" value={injPlan.side.toUpperCase()} />
+            <Stat label="Price" value={formatUsd(injPlan.price)} />
+            <Stat label="Notional" value={formatCompactUsd(injPlan.notionalUsd)} />
+          </div>
+          <p className="mt-2 text-slate-400">{injPlan.reason}</p>
+          <button
+            onClick={onInjectiveExecute}
+            disabled={injectiveExecuting}
+            className="btn mt-3 w-full bg-indigo-500/20 text-indigo-100 ring-1 ring-indigo-500/40 text-xs"
+          >
+            {injectiveExecuting ? "Submitting via MCP…" : "Execute on Injective (MCP)"}
+          </button>
+        </div>
       )}
 
       {prepared.plan.status === "ready" && (
@@ -473,7 +811,9 @@ function SideCard({
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
             <div>
               <p className="text-slate-500">DEX</p>
-              <p className="font-medium text-slate-100">{quote.source.toUpperCase()}</p>
+              <p className="font-medium text-slate-100">
+                {quote.source.toUpperCase()} <ChainBadge chain={quote.chain} />
+              </p>
             </div>
             <div>
               <p className="text-slate-500">Liquidity</p>
@@ -568,6 +908,19 @@ function quoteToken(pair: string): string {
 
 function baseToken(pair: string): string {
   return pair.split("/")[0];
+}
+
+function chainLabel(chain?: "solana" | "injective"): string {
+  if (chain === "injective") return "Injective";
+  if (chain === "solana") return "Solana";
+  return "—";
+}
+
+function ChainBadge({ chain }: { chain?: "solana" | "injective" }) {
+  if (!chain) return null;
+  const klass =
+    chain === "injective" ? "badge-blue" : "badge-slate";
+  return <span className={klass}>{chainLabel(chain)}</span>;
 }
 
 function nativeAmount(value: string, decimals: number): string {

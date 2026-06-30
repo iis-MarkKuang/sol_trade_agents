@@ -491,3 +491,84 @@ interface StrategyConfig {
 - **Grafana Dashboards**: Visualize all metrics
 - **Logging**: Winston with structured JSON logs
 - **Alerting**: Alertmanager for job failures and anomalies
+
+---
+
+## Injective Cross-Chain Layer (Nova Program)
+
+The realtime agent is extended to operate across **Solana and Injective** without changing its core orchestration. Chain-specific behaviour is injected behind existing interfaces.
+
+### Chain abstraction
+
+- `DexQuote` now carries `chain: "solana" | "injective"`.
+- `TokenInfo` carries both an optional Solana `mint` and an optional Injective `denom`.
+- `TokenPair` carries an optional `chain` flag (used for Injective perpetuals that have no base denom).
+- `RealTimeAgentCore.prepareTrade` dispatches by the selected route's `chain`:
+  - `solana` → `JupiterTransactionBuilder` (unsigned swap tx)
+  - `injective` → builds an `InjectiveExecutionPlan` (executed later via an explicit endpoint)
+
+### Injective adapters
+
+- **`InjectiveHelixAdapter`** (`backend/src/dex/injective-helix-adapter.ts`) — implements `DexAdapter` against the public Injective exchange REST API (`/api/exchange/v2/{spot,derivative}/orderbook`). Returns quotes tagged `chain: "injective"` and embeds the Helix `marketId` in `quote.raw` so the executor knows which market to trade.
+- **`InjectivePythPriceFeedService`** (`backend/src/oracle/injective-pyth-adapter.ts`) — Injective shares the Pyth Hermes oracle network with Solana, so this is a thin chain-scoped wrapper over the existing `PythPriceFeedService`. INJ/USDC/USDT use real Pyth feed IDs.
+
+Both adapters are registered in `RealtimeService.onModuleInit` only when `ENABLE_INJECTIVE=true`, and `injective_helix` is added to the risk policy's `allowedDexes`.
+
+### Execution via the official Injective MCP server
+
+Instead of re-implementing Cosmos signing, the project spawns the open-source [Injective MCP server](https://github.com/InjectiveLabs/mcp-server) as a stdio child process and speaks JSON-RPC 2.0 to it (`backend/src/transactions/injective-mcp-client.ts`).
+
+- `InjectiveMcpClient` performs the MCP `initialize` handshake, then calls the `trade_open` tool with `{ market_id, market_type, side, amount, price }` derived from the `InjectiveExecutionPlan`.
+- The MCP server fetches the oracle price, quantizes size/margin, builds, signs (using `INJECTIVE_MNEMONIC`), and broadcasts — returning a tx hash.
+- When no mnemonic is configured, `MockInjectiveTradeExecutor` returns a simulated tx hash so the full lifecycle is exercisable in demos.
+- Execution is **explicit** (`POST /realtime/trade/injective-execute`); `prepareTrade` never signs, mirroring how the Solana side returns an unsigned transaction.
+
+### Cross-chain arbitrage & NL assistant
+
+- **`CrossChainArbStrategy`** (`backend/src/strategy/strategies/cross-chain-arb.strategy.ts`) scans assets that trade on both chains (BTC, ETH) and emits a signal when the Solana↔Injective spread exceeds the estimated deBridge/Peggy bridge cost. Signals include the recommended buy-chain, sell-chain, and bridge path.
+- **`CrossChainAgentService`** (`backend/src/realtime/cross-chain-agent.service.ts`) exposes two LangChain tools (`query_cross_chain_nbbo`, `propose_arb_plan`) to a ChatOpenAI model so a user can ask for a cross-chain plan in natural language — aligning with Injective's "natural language trading via MCP" narrative. Falls back to a deterministic summary when no LLM key is set.
+
+### Data flow (Injective-enabled)
+
+```mermaid
+flowchart LR
+    Pyth["Pyth Hermes (shared)"] --> Core["RealTimeAgentCore"]
+    SolAdapters["Solana DEX adapters"] --> Agg["DexOrderBookAggregator"]
+    InjAdapter["InjectiveHelixAdapter"] --> Agg
+    Agg --> NBBO["NbboEngine (cross-chain)"]
+    NBBO --> Core
+    Core -->|"chain=solana"| Jupiter["JupiterTransactionBuilder"]
+    Core -->|"chain=injective"| Plan["InjectiveExecutionPlan"]
+    Plan --> Exec["POST /trade/injective-execute"]
+    Exec --> MCP["InjectiveMcpClient (stdio)"]
+    MCP --> InjChain["Injective chain"]
+    Arb["CrossChainArbStrategy"] --> Agent["CrossChainAgentService + LangChain tools"]
+    Agent --> Plan
+```
+
+## Injective Agent Identity Layer (ERC-8004)
+
+The Nova Program's flagship "agent infrastructure" story is on-chain agent identity. The project now participates bidirectionally:
+
+- **Consumes** the official Injective MCP server to execute trades (above).
+- **Is** an on-chain Injective agent (ERC-8004 identity) and **exposes** its own MCP server.
+
+### Components
+
+- `InjectiveAgentIdentityService` (`backend/src/agent/injective-agent-identity.service.ts`) — returns our agent's identity card. Real when `INJECTIVE_AGENT_ID` is set (fetched on-chain), otherwise a deterministic simulated card. Also lists the registry.
+- `InjectiveRegistryReader` (`backend/src/agent/injective-registry.viem.ts`) — read-only `viem` client for the canonical Injective Identity Registry (testnet `0x8004A818…`, mainnet `0x8004A169…`). Supports `getAgentById` (ownerOf / tokenURI / getAgentWallet / getMetadata) and a bounded `discoverAgentIds` Transfer-event scan. No `@injective/agent-sdk` dependency (it is not yet published to npm); addresses/ABI are sourced from the official SDK repo.
+- `AgentMcpServerService` (`backend/src/realtime/agent-mcp-server.service.ts`) — a standards-compliant MCP server (Streamable HTTP at `POST /mcp`) built with `@modelcontextprotocol/sdk`, dynamically imported (ESM) from the CommonJS NestJS build. Tools: `query_cross_chain_nbbo`, `propose_arb_plan`, `execute_injective_trade`, `get_agent_identity`.
+
+### Identity + MCP data flow
+
+```mermaid
+flowchart LR
+    Identity["InjectiveAgentIdentityService"] -->|"getAgentById / discover"| Registry["Injective Identity Registry (ERC-8004)"]
+    Registry -->|tokenURI| IPFS["Agent Card (IPFS)"]
+    Identity --> Card["Our Agent Card (services = MCP endpoint)"]
+    Card --> Agents["agents.injective.com discovery"]
+    Peer["Other Injective agents"] -->|"POST /mcp tools/call"| Mcp["AgentMcpServerService"]
+    Mcp --> Tools["query_nbbo / propose_arb / execute_injective / get_identity"]
+    Tools --> Realtime["RealtimeService"]
+    Realtime --> InjMcp["InjectiveMcpClient (trade)"]
+```

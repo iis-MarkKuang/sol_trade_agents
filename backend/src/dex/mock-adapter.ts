@@ -1,9 +1,10 @@
 import type { DexAdapter } from "./adapter.js";
-import type { DexQuote, DexQuoteRequest, DexSource } from "../types.js";
+import type { ChainId, DexQuote, DexQuoteRequest, DexSource } from "../types.js";
 import { inputOutputForSide, outputAmountFromPrice } from "../utils/amounts.js";
 
 export interface MockDexAdapterConfig {
   source?: DexSource;
+  chain?: ChainId;
   midPrice: number;
   bidSpreadBps?: number;
   askSpreadBps?: number;
@@ -35,6 +36,7 @@ export class MockDexAdapter implements DexAdapter {
     return [
       {
         source: this.source,
+        chain: this.config.chain ?? "solana",
         side: request.side,
         pair: request.pair.symbol,
         inputMint,

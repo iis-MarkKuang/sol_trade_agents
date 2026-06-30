@@ -6,26 +6,37 @@ import {
 } from '@nestjs/common';
 import { Connection } from '@solana/web3.js';
 import { ConfigService } from '../config/config.service';
-import { DEFAULT_PAIRS, getTokenPair, normalizePairSymbol } from '../config/tokens.js';
+import {
+  ALL_PAIRS,
+  INJECTIVE_HELIX_MARKETS,
+  getTokenPair,
+  normalizePairSymbol,
+  pairSymbolForChain,
+} from '../config/tokens.js';
 import { RealTimeAgentCore } from '../agent/realtime-agent-core.js';
 import type { DexAdapter } from '../dex/adapter.js';
 import { DexOrderBookAggregator } from '../dex/aggregator.js';
+import { InjectiveHelixAdapter, type InjectiveHelixMarket } from '../dex/injective-helix-adapter.js';
 import { JupiterQuoteAdapter } from '../dex/jupiter-adapter.js';
 import { MockDexAdapter } from '../dex/mock-adapter.js';
 import { OracleMockAdapter } from '../dex/oracle-mock-adapter.js';
 import { OrcaWhirlpoolOrderBookAdapter } from '../dex/orca-adapter.js';
 import { RaydiumOrderBookAdapter } from '../dex/raydium-adapter.js';
 import { NbboEngine } from '../nbbo/engine.js';
-import {
-  PythPriceFeedService,
-  type PriceFeedSubscriber,
-  type PriceFeedSubscription,
-} from '../oracle/pyth-price-feed.js';
+import { PythPriceFeedService, type PriceFeedSubscriber, type PriceFeedSubscription } from '../oracle/pyth-price-feed.js';
 import { RiskEngine } from '../risk/risk-engine.js';
+import { CrossChainArbStrategy, type CrossChainArbOptions, type CrossChainArbSignal } from '../strategy/strategies/cross-chain-arb.strategy.js';
 import { JupiterTransactionBuilder } from '../transactions/jupiter-transaction-builder.js';
+import {
+  InjectiveMcpClient,
+  MockInjectiveTradeExecutor,
+  type InjectiveTradeExecutor,
+  type InjectiveTradeResult,
+} from '../transactions/injective-mcp-client.js';
 import type {
   AggregatedOrderBook,
   DexQuoteRequest,
+  InjectiveExecutionPlan,
   NbboSnapshot,
   PriceUpdate,
   RiskPolicy,
@@ -65,21 +76,30 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
   private priceFeed!: PriceFeedSubscriber;
   private priceSubscription?: PriceFeedSubscription;
   private policy!: RiskPolicy;
+  private injectiveExecutor?: InjectiveTradeExecutor;
+  private readonly disposables: Array<() => unknown> = [];
   private readonly priceCache = new Map<string, PriceUpdate>();
 
   constructor(
     private readonly configService: ConfigService,
     private readonly tradeRepo: RealtimeTradeRepository,
     private readonly gateway: RealtimeGateway,
+    private readonly arbStrategy: CrossChainArbStrategy,
   ) {}
 
   onModuleInit(): void {
     const cfg = this.configService.realtime;
+    const injCfg = this.configService.injective;
+    const allowedDexes: RiskPolicy['allowedDexes'] = cfg.enableRealDex
+      ? ['jupiter', 'raydium', 'orca', 'mock']
+      : ['mock'];
+    if (injCfg.enabled) {
+      allowedDexes.push('injective_helix');
+    }
+
     this.policy = {
-      allowedPairs: Object.keys(DEFAULT_PAIRS),
-      allowedDexes: cfg.enableRealDex
-        ? ['jupiter', 'raydium', 'orca', 'mock']
-        : ['mock'],
+      allowedPairs: Object.keys(ALL_PAIRS),
+      allowedDexes,
       maxSlippageBps: cfg.maxSlippageBps,
       maxPositionNotionalUsd: cfg.maxPositionNotionalUsd,
       minLiquidityUsd: cfg.minLiquidityUsd,
@@ -107,6 +127,11 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
           }),
         ];
 
+    if (injCfg.enabled) {
+      adapters.push(this.buildInjectiveAdapter());
+      this.injectiveExecutor = this.buildInjectiveExecutor();
+    }
+
     this.aggregator = new DexOrderBookAggregator(adapters, {
       quoteTimeoutMs: cfg.dexQuoteTimeoutMs,
     });
@@ -117,17 +142,18 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       nbbo: this.nbbo,
       risk: new RiskEngine(),
       policy: this.policy,
-      tokenPairs: DEFAULT_PAIRS,
+      tokenPairs: ALL_PAIRS,
       txBuilder: cfg.enableRealDex
         ? new JupiterTransactionBuilder({ apiKey: cfg.jupiterApiKey })
         : undefined,
+      injectiveExecutor: this.injectiveExecutor,
       retries: cfg.retries,
     });
 
     this.subscribePythBroadcast();
     this.logger.log(
-      `Realtime agent initialised (realDex=${cfg.enableRealDex}, pairs=${Object.keys(
-        DEFAULT_PAIRS,
+      `Realtime agent initialised (realDex=${cfg.enableRealDex}, injective=${injCfg.enabled}, pairs=${Object.keys(
+        ALL_PAIRS,
       ).join(',')})`,
     );
   }
@@ -137,6 +163,13 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       this.priceSubscription?.close();
     } catch (error) {
       this.logger.warn(`Failed to close Pyth subscription: ${(error as Error).message}`);
+    }
+    for (const dispose of this.disposables) {
+      try {
+        await dispose();
+      } catch (error) {
+        this.logger.warn(`Disposable cleanup failed: ${(error as Error).message}`);
+      }
     }
   }
 
@@ -326,6 +359,34 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     return applyBps(plan.selectedRoute.quote.outAmount, plan.intent.maxSlippageBps);
   }
 
+  /**
+   * Scan shared assets (BTC, ETH) across Solana and Injective nBBO snapshots and
+   * return cross-chain arbitrage signals. This is the "跨链量化辅助" online layer.
+   */
+  async getCrossChainArb(options: CrossChainArbOptions = {}): Promise<{
+    signals: CrossChainArbSignal[];
+    snapshots: Record<string, NbboSnapshot>;
+  }> {
+    const assets = options.assets ?? ['BTC', 'ETH'];
+    const snapshots: Record<string, NbboSnapshot> = {};
+
+    for (const asset of assets) {
+      for (const chain of ['solana', 'injective'] as const) {
+        const symbol = pairSymbolForChain(asset, chain);
+        if (!symbol) continue;
+        if (snapshots[symbol]) continue;
+        try {
+          snapshots[symbol] = await this.getMarketNbbo({ pair: symbol, slippageBps: 100 });
+        } catch (error) {
+          this.logger.warn(`nBBO fetch failed for ${symbol}: ${(error as Error).message}`);
+        }
+      }
+    }
+
+    const signals = this.arbStrategy.detectArb(snapshots, options);
+    return { signals, snapshots };
+  }
+
   private buildLiveAdapters(): DexAdapter[] {
     const cfg = this.configService.realtime;
     const connection = new Connection(cfg.solanaRpcUrl, 'confirmed');
@@ -340,8 +401,74 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     ];
   }
 
+  private buildInjectiveAdapter(): InjectiveHelixAdapter {
+    const injCfg = this.configService.injective;
+    const markets: Record<string, InjectiveHelixMarket> = { ...INJECTIVE_HELIX_MARKETS };
+    for (const [pair, meta] of Object.entries(parseHelixMarketMap(injCfg.helixMarkets))) {
+      markets[normalizePairSymbol(pair)] = meta;
+    }
+    return new InjectiveHelixAdapter({
+      markets,
+      apiBaseUrl: injCfg.exchangeApi,
+    });
+  }
+
+  private buildInjectiveExecutor(): InjectiveTradeExecutor {
+    const injCfg = this.configService.injective;
+    if (injCfg.mnemonic) {
+      const client = new InjectiveMcpClient({
+        bin: injCfg.mcpBin,
+        network: injCfg.network,
+        mnemonic: injCfg.mnemonic,
+      });
+      this.disposables.push(() => void client.onModuleDestroy());
+      return client;
+    }
+    this.logger.warn(
+      'INJECTIVE_MNEMONIC not set — using MockInjectiveTradeExecutor (no real signing)',
+    );
+    return new MockInjectiveTradeExecutor();
+  }
+
+  /**
+   * Execute a previously-prepared Injective trade plan via the MCP server.
+   * Signing is explicit (not done in prepareTrade) so the user keeps final say.
+   */
+  async executeInjectiveTrade(input: {
+    tradeId: string;
+    options?: Record<string, unknown>;
+  }): Promise<InjectiveTradeResult> {
+    if (!this.injectiveExecutor) {
+      throw new Error('Injective execution is not enabled (set ENABLE_INJECTIVE=true)');
+    }
+    const trade = await this.tradeRepo.findById(input.tradeId);
+    if (!trade || !trade.plan) {
+      throw new Error(`Trade ${input.tradeId} not found or has no plan`);
+    }
+    const plan = trade.plan as unknown as TradeExecutionPlan;
+    if (!plan.injectiveExecutionPlan) {
+      throw new Error(`Trade ${input.tradeId} has no Injective execution plan`);
+    }
+
+    const result = await this.injectiveExecutor.executeTrade({
+      plan: plan.injectiveExecutionPlan,
+      intent: plan.intent,
+      options: input.options,
+    });
+
+    await this.confirmExecution({
+      tradeId: input.tradeId,
+      status: result.status === 'failed' ? 'FAILED' : result.status === 'confirmed' ? 'CONFIRMED' : 'SUBMITTED',
+      txSignature: result.txHash,
+      executionPrice: plan.selectedRoute?.quote.price,
+      message: result.message,
+    });
+
+    return result;
+  }
+
   private subscribePythBroadcast(): void {
-    const pairs = Object.values(DEFAULT_PAIRS).filter((pair) =>
+    const pairs = Object.values(ALL_PAIRS).filter((pair) =>
       pair.base.pythPriceId && pair.quote.isStableQuote,
     );
     if (pairs.length === 0) {
@@ -438,6 +565,23 @@ function parsePoolMap(value: string | undefined): Record<string, string> {
     if (pair && pool) {
       accumulator[normalizePairSymbol(pair)] = pool.trim();
     }
+    return accumulator;
+  }, {});
+}
+
+function parseHelixMarketMap(value: string | undefined): Record<string, InjectiveHelixMarket> {
+  if (!value) {
+    return {};
+  }
+  return value.split(',').reduce<Record<string, InjectiveHelixMarket>>((accumulator, item) => {
+    const [pair, rest] = item.split('=');
+    if (!pair || !rest) return accumulator;
+    const [marketId, type] = rest.split(':');
+    if (!marketId) return accumulator;
+    accumulator[pair.trim()] = {
+      marketId: marketId.trim(),
+      type: (type?.trim() === 'derivative' ? 'derivative' : 'spot') as 'spot' | 'derivative',
+    };
     return accumulator;
   }, {});
 }

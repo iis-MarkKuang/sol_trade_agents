@@ -70,6 +70,7 @@ export interface NbboSnapshot {
 
 export interface NbboQuote {
   source: string;
+  chain?: "solana" | "injective";
   side: "bid" | "ask";
   pair: string;
   price: number;
@@ -110,6 +111,16 @@ export interface TradeRecord {
   }>;
 }
 
+export interface InjectiveExecutionPlan {
+  marketId: string;
+  marketType: "spot" | "derivative";
+  side: "buy" | "sell";
+  amount: string;
+  price: number;
+  notionalUsd: number;
+  reason: string;
+}
+
 export interface PreparedTradeResponse {
   tradeId: string;
   plan: {
@@ -119,8 +130,118 @@ export interface PreparedTradeResponse {
     selectedRoute?: { quote: NbboQuote; reason: string };
     nbbo: NbboSnapshot;
     oraclePrice: { price: number; confidenceBps: number; isStale: boolean; publishTime: number };
+    injectiveExecutionPlan?: InjectiveExecutionPlan;
   };
 }
+
+export interface CrossChainArbSignal {
+  asset: string;
+  solanaPair: string;
+  injectivePair: string;
+  solanaMid: number;
+  injectiveMid: number;
+  spreadBps: number;
+  bridgeCostBps: number;
+  netEdgeBps: number;
+  buyChain: "solana" | "injective";
+  sellChain: "solana" | "injective";
+  action: "buy" | "sell";
+  confidence: number;
+  reason: string;
+  bridgePath: string;
+  estimatedNotionalUsd: number;
+  timestamp: number;
+}
+
+export interface CrossChainArbResponse {
+  signals: CrossChainArbSignal[];
+  snapshots: Record<string, NbboSnapshot>;
+}
+
+export interface CrossChainPlanResponse {
+  prompt: string;
+  signals: CrossChainArbSignal[];
+  analysis: string;
+  toolCallCount: number;
+  llmUsed: boolean;
+}
+
+export interface InjectiveExecuteResponse {
+  txHash?: string;
+  orderHash?: string;
+  status: "submitted" | "confirmed" | "failed" | "simulated";
+  message: string;
+  raw?: unknown;
+}
+
+export interface AgentServiceEntry {
+  type: string;
+  endpoint: string;
+  description?: string;
+}
+
+export interface AgentCard {
+  name: string;
+  description: string;
+  type: string;
+  builderCode: string;
+  image?: string;
+  x402: boolean;
+  services: AgentServiceEntry[];
+  version?: string;
+  tags?: string[];
+  sourceCode?: string;
+  documentation?: string;
+}
+
+export interface AgentIdentity {
+  agentId: string;
+  identityTuple: string;
+  name: string;
+  type: string;
+  builderCode: string;
+  owner?: string;
+  wallet?: string;
+  cardUri: string;
+  scanUrl: string;
+  card: AgentCard;
+  registered: boolean;
+  simulated: boolean;
+  network: string;
+  chainId: number;
+  registry: string;
+  mcpEndpoint: string;
+}
+
+export interface RegistryAgent {
+  agentId: string;
+  name: string;
+  type: string;
+  owner: string;
+  wallet: string;
+  builderCode: string;
+  tokenUri: string;
+  identityTuple: string;
+  scanUrl: string;
+  card?: AgentCard | null;
+  real: boolean;
+}
+
+export interface RegistryList {
+  network: string;
+  total: number;
+  offset: number;
+  limit: number;
+  agents: RegistryAgent[];
+  real: boolean;
+  note?: string;
+}
+
+export const agentIdentityApi = {
+  identity: () => api.get<AgentIdentity>("/agent/identity"),
+  registry: (offset = 0, limit = 20) =>
+    api.get<RegistryList>(`/agent/registry?offset=${offset}&limit=${limit}`),
+};
 
 export const offlineApi = {
   status: () => api.get<{ schedulerEnabled: boolean; timestamp: string }>("/agent/status"),
@@ -156,6 +277,12 @@ export const realtimeApi = {
     api.post<PreparedTradeResponse>("/realtime/trade/prepare", payload),
   confirm: (payload: ConfirmTradePayload) =>
     api.post<{ ok: true }>("/realtime/trade/confirm", payload),
+  executeInjective: (tradeId: string) =>
+    api.post<InjectiveExecuteResponse>("/realtime/trade/injective-execute", { tradeId }),
   trades: (limit = 25) => api.get<TradeRecord[]>(`/realtime/trades?limit=${limit}`),
-  trade: (id: string) => api.get<TradeRecord>(`/realtime/trades/${id}`)
+  trade: (id: string) => api.get<TradeRecord>(`/realtime/trades/${id}`),
+  crossChainArb: (params: { notionalUsd?: number; minNetEdgeBps?: number; assets?: string }) =>
+    api.get<CrossChainArbResponse>("/realtime/cross-chain/arb", { params }),
+  crossChainPlan: (payload: { prompt: string; notionalUsd?: number; minNetEdgeBps?: number }) =>
+    api.post<CrossChainPlanResponse>("/realtime/cross-chain/plan", payload)
 };

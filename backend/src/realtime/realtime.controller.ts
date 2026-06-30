@@ -15,12 +15,13 @@ import {
   ConfirmTradeDtoSchema,
 } from './dto/prepare-trade.dto';
 import { RealtimeService } from './realtime.service';
+import { CrossChainAgentService } from './cross-chain-agent.service';
 
 @Controller('realtime')
 export class RealtimeController {
   private readonly logger = new Logger(RealtimeController.name);
 
-  constructor(private readonly realtime: RealtimeService) {}
+  constructor(private readonly realtime: RealtimeService, private readonly crossChainAgent: CrossChainAgentService) {}
 
   @Get('health')
   health() {
@@ -81,6 +82,26 @@ export class RealtimeController {
     return { ok: true };
   }
 
+  @Post('trade/injective-execute')
+  async executeInjectiveTrade(@Body() body: unknown) {
+    const input =
+      body && typeof body === 'object' ? (body as { tradeId?: string; options?: Record<string, unknown> }) : {};
+    if (!input.tradeId) {
+      throw new BadRequestException('tradeId is required');
+    }
+    try {
+      const result = await this.realtime.executeInjectiveTrade({
+        tradeId: input.tradeId,
+        options: input.options,
+      });
+      return safe(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`injective-execute failed: ${message}`);
+      throw new BadRequestException(message);
+    }
+  }
+
   @Get('trades')
   async listTrades(@Query('limit') limit?: string) {
     const numericLimit = limit ? Math.min(Math.max(Number(limit) || 50, 1), 200) : 50;
@@ -94,6 +115,35 @@ export class RealtimeController {
       throw new NotFoundException(`Trade ${id} not found`);
     }
     return safe(trade);
+  }
+
+  @Get('cross-chain/arb')
+  async crossChainArb(
+    @Query('notionalUsd') notionalUsd?: string,
+    @Query('minNetEdgeBps') minNetEdgeBps?: string,
+    @Query('assets') assets?: string,
+  ) {
+    const result = await this.realtime.getCrossChainArb({
+      notionalUsd: notionalUsd ? Number(notionalUsd) : undefined,
+      minNetEdgeBps: minNetEdgeBps ? Number(minNetEdgeBps) : undefined,
+      assets: assets ? assets.split(',').map((a) => a.trim()).filter(Boolean) : undefined,
+    });
+    return safe(result);
+  }
+
+  @Post('cross-chain/plan')
+  async crossChainPlan(@Body() body: unknown) {
+    const input =
+      body && typeof body === 'object' ? (body as { prompt?: string; notionalUsd?: number; minNetEdgeBps?: number }) : {};
+    if (!input.prompt) {
+      throw new BadRequestException('prompt is required');
+    }
+    const result = await this.crossChainAgent.proposePlan({
+      prompt: input.prompt,
+      notionalUsd: input.notionalUsd,
+      minNetEdgeBps: input.minNetEdgeBps,
+    });
+    return safe(result);
   }
 }
 

@@ -53,6 +53,7 @@ export class OracleMockAdapter implements DexAdapter {
     return [
       {
         source: this.source,
+        chain: "solana",
         side: request.side,
         pair: request.pair.symbol,
         inputMint,

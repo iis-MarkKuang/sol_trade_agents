@@ -3,6 +3,7 @@ import { ConfigService } from '../config/config.service';
 import { CrawledMarketData } from '../crawlers/types/crawler.types';
 import { ChatOpenAI } from '@langchain/openai';
 import { PromptTemplate } from '@langchain/core/prompts';
+import { buildChatModel } from './llm-factory.js';
 
 @Injectable()
 export class LlmAgentService {
@@ -10,13 +11,9 @@ export class LlmAgentService {
   private llm?: ChatOpenAI;
 
   constructor(private configService: ConfigService) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey) {
-      this.llm = new ChatOpenAI({
-        openAIApiKey: apiKey,
-        temperature: 0.7,
-        modelName: 'gpt-4o-mini',
-      });
+    this.llm = buildChatModel(configService, { temperature: 0.7, modelName: 'gpt-4o-mini' });
+    if (this.llm) {
+      this.logger.log(`LLM ready (provider=${configService.llm.provider})`);
     }
   }
 

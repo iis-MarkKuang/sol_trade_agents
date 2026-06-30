@@ -1,4 +1,6 @@
-export type DexSource = "jupiter" | "raydium" | "orca" | "mock";
+export type DexSource = "jupiter" | "raydium" | "orca" | "injective_helix" | "mock";
+
+export type ChainId = "solana" | "injective";
 
 export type QuoteSide = "bid" | "ask";
 
@@ -6,7 +8,10 @@ export type TradeSide = "buy" | "sell";
 
 export interface TokenInfo {
   symbol: string;
-  mint: string;
+  /** Solana SPL mint address (required for Solana-side execution). */
+  mint?: string;
+  /** Injective bank/IBC denom (required for Injective-side execution). */
+  denom?: string;
   decimals: number;
   pythPriceId?: string;
   isStableQuote?: boolean;
@@ -16,6 +21,8 @@ export interface TokenPair {
   symbol: string;
   base: TokenInfo;
   quote: TokenInfo;
+  /** Explicit chain tag for pairs that aren't unambiguously denom/mint based (e.g. Injective perps). */
+  chain?: ChainId;
 }
 
 export interface PriceUpdate {
@@ -41,6 +48,7 @@ export interface DexQuoteRequest {
 
 export interface DexQuote {
   source: DexSource;
+  chain: ChainId;
   side: QuoteSide;
   pair: string;
   inputMint: string;
@@ -114,6 +122,16 @@ export interface RouteSelection {
   reason: string;
 }
 
+export interface InjectiveExecutionPlan {
+  marketId: string;
+  marketType: "spot" | "derivative";
+  side: TradeSide;
+  amount: string;
+  price: number;
+  notionalUsd: number;
+  reason: string;
+}
+
 export interface TradeExecutionPlan {
   status: "ready" | "rejected";
   intent: TradeIntent;
@@ -124,5 +142,6 @@ export interface TradeExecutionPlan {
   minOutAmount?: bigint;
   rejectionReason?: string;
   unsignedTransactionBase64?: string;
+  injectiveExecutionPlan?: InjectiveExecutionPlan;
   createdAt: number;
 }

@@ -14,6 +14,18 @@ describe('LlmAgentService', () => {
           provide: ConfigService,
           useValue: {
             get: jest.fn(),
+            llm: {
+              provider: 'openai',
+              azureOpenAIApiKey: undefined,
+              azureOpenAIApiInstanceName: undefined,
+              azureOpenAIApiDeploymentName: undefined,
+              azureOpenAIApiVersion: '2024-08-01-preview',
+              azureOpenAIBasePath: undefined,
+              openAIApiKey: undefined,
+              openAIBaseUrl: undefined,
+              model: 'gpt-4o-mini',
+              temperature: 0.7,
+            },
           },
         },
       ],
