@@ -88,7 +88,7 @@ const ConfigSchema = z.object({
   AZURE_OPENAI_BASE_PATH: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),
-  LLM_MODEL: z.string().default('gpt-4o-mini'),
+  LLM_MODEL: z.string().default('deepseek/deepseek-chat-v3-0324'),
   LLM_TEMPERATURE: numberFromString(0.3),
 
   MAX_SLIPPAGE_BPS: numberFromString(100),

@@ -11,7 +11,7 @@ export class LlmAgentService {
   private llm?: ChatOpenAI;
 
   constructor(private configService: ConfigService) {
-    this.llm = buildChatModel(configService, { temperature: 0.7, modelName: 'gpt-4o-mini' });
+    this.llm = buildChatModel(configService, { temperature: 0.7 });
     if (this.llm) {
       this.logger.log(`LLM ready (provider=${configService.llm.provider})`);
     }

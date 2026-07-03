@@ -4,7 +4,7 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { ConfigService } from '../config/config.service.js';
-import { buildChatModel } from '../agents/llm-factory.js';
+import { buildChatModel, resolveToolModelCandidates } from '../agents/llm-factory.js';
 import { RealtimeService } from './realtime.service.js';
 import type { CrossChainArbSignal } from '../strategy/strategies/cross-chain-arb.strategy.js';
 
@@ -20,6 +20,8 @@ export interface CrossChainPlanResponse {
   analysis: string;
   toolCallCount: number;
   llmUsed: boolean;
+  /** OpenRouter / provider model id when llmUsed=true */
+  model?: string;
 }
 
 /**
@@ -35,15 +37,17 @@ export interface CrossChainPlanResponse {
 @Injectable()
 export class CrossChainAgentService {
   private readonly logger = new Logger(CrossChainAgentService.name);
-  private llm?: ChatOpenAI;
 
   constructor(
     private readonly realtime: RealtimeService,
-    configService: ConfigService,
+    private readonly configService: ConfigService,
   ) {
-    this.llm = buildChatModel(configService, { temperature: 0.3 });
-    if (this.llm) {
-      this.logger.log(`Cross-chain agent LLM ready (provider=${configService.llm.provider})`);
+    const cfg = configService.llm;
+    if (cfg.openAIApiKey || cfg.azureOpenAIApiKey) {
+      const models = resolveToolModelCandidates(configService);
+      this.logger.log(
+        `Cross-chain agent LLM ready (provider=${cfg.provider}, models=${models.join(' → ')})`,
+      );
     }
   }
 
@@ -110,7 +114,11 @@ User request: {prompt}`,
       },
     );
 
-    if (!this.llm) {
+    const hasLlm =
+      Boolean(this.configService.llm.openAIApiKey) ||
+      Boolean(this.configService.llm.azureOpenAIApiKey);
+
+    if (!hasLlm) {
       this.logger.warn('LLM not configured — running deterministic cross-chain plan');
       const { signals } = await this.realtime.getCrossChainArb(baseOptions);
       return {
@@ -122,41 +130,57 @@ User request: {prompt}`,
       };
     }
 
-    try {
-      const bound = this.llm.bindTools([arbTool, nbboTool]);
-      const formatted = await this.planTemplate.format({ prompt: request.prompt });
-      const response = await bound.invoke(formatted);
+    const formatted = await this.planTemplate.format({ prompt: request.prompt });
+    const models = resolveToolModelCandidates(this.configService);
+    let lastError = 'no models configured';
 
-      const toolCalls = (response as { tool_calls?: Array<{ name?: string }> }).tool_calls ?? [];
-      let signals: CrossChainArbSignal[] = [];
+    for (const model of models) {
+      const llm = buildChatModel(this.configService, { temperature: 0.3, modelName: model });
+      if (!llm) continue;
 
-      if (toolCalls.length === 0) {
-        const direct = await this.realtime.getCrossChainArb(baseOptions);
-        signals = direct.signals;
-      } else {
-        const direct = await this.realtime.getCrossChainArb(baseOptions);
-        signals = direct.signals;
+      try {
+        const result = await this.invokePlanLlm(llm, formatted, arbTool, nbboTool, baseOptions, request.prompt);
+        return { ...result, model };
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Cross-chain LLM model ${model} failed: ${lastError}`);
       }
-
-      const content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
-      return {
-        prompt: request.prompt,
-        signals,
-        analysis: content || this.formatDeterministicAnalysis(request.prompt, signals),
-        toolCallCount: toolCalls.length,
-        llmUsed: true,
-      };
-    } catch (error) {
-      this.logger.error(`Cross-chain LLM plan failed: ${(error as Error).message}`);
-      const { signals } = await this.realtime.getCrossChainArb(baseOptions);
-      return {
-        prompt: request.prompt,
-        signals,
-        analysis: this.formatDeterministicAnalysis(request.prompt, signals),
-        toolCallCount: 0,
-        llmUsed: false,
-      };
     }
+
+    this.logger.error(`Cross-chain LLM plan failed (tried ${models.join(', ')}): ${lastError}`);
+    const { signals } = await this.realtime.getCrossChainArb(baseOptions);
+    return {
+      prompt: request.prompt,
+      signals,
+      analysis: this.formatDeterministicAnalysis(request.prompt, signals),
+      toolCallCount: 0,
+      llmUsed: false,
+    };
+  }
+
+  private async invokePlanLlm(
+    llm: ChatOpenAI,
+    formatted: string,
+    arbTool: ReturnType<typeof tool>,
+    nbboTool: ReturnType<typeof tool>,
+    baseOptions: { notionalUsd?: number; minNetEdgeBps?: number },
+    prompt: string,
+  ): Promise<Omit<CrossChainPlanResponse, 'model'>> {
+    const bound = llm.bindTools([arbTool, nbboTool]);
+    const response = await bound.invoke(formatted);
+
+    const toolCalls = (response as { tool_calls?: Array<{ name?: string }> }).tool_calls ?? [];
+    const { signals } = await this.realtime.getCrossChainArb(baseOptions);
+    const content =
+      typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+
+    return {
+      prompt,
+      signals,
+      analysis: content || this.formatDeterministicAnalysis(prompt, signals),
+      toolCallCount: toolCalls.length,
+      llmUsed: true,
+    };
   }
 
   private formatDeterministicAnalysis(prompt: string, signals: CrossChainArbSignal[]): string {

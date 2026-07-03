@@ -140,7 +140,9 @@ export class InjectiveRegistryReader {
   }
 
   scanUrl(agentId: bigint): string {
-    return `https://agents.injective.com/agent/${agentId.toString()}`;
+    // Per-agent detail page on the official Injective Agent Registry.
+    // Confirmed path: /registry/{tokenId}  (NOT /agent/{id}, which 404s).
+    return `https://agents.injective.com/registry/${agentId.toString()}`;
   }
 
   async getAgentById(agentId: bigint): Promise<RawAgentData | null> {
@@ -181,6 +183,7 @@ export class InjectiveRegistryReader {
     const latest = await this.publicClient.getBlockNumber();
     const minted = new Set<bigint>();
     const burned = new Set<bigint>();
+    let chunkErrors = 0;
 
     for (let i = 0; i < opts.maxChunks; i++) {
       const chunkStart = fromBlock + BigInt(i) * BigInt(opts.chunkSize);
@@ -202,8 +205,18 @@ export class InjectiveRegistryReader {
             minted.add(a.tokenId);
           }
         }
-      } catch {
-        // range too large / node limit — shrink and continue silently
+      } catch (err) {
+        // Range too large / node limit — viem getLogs rejected this chunk.
+        // Surface once so misconfigured chunk sizes (e.g. mainnet sentry caps at
+        // 10k blocks) are diagnosable instead of silently yielding 0 agents.
+        if (chunkErrors === 0) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[InjectiveRegistryReader] getLogs chunk failed at block ${chunkStart.toString()} (chunkSize=${opts.chunkSize}); ` +
+              `reducing INJECTIVE_AGENT_SCAN_CHUNK_SIZE may help. First error: ${msg.slice(0, 120)}`,
+          );
+        }
+        chunkErrors++;
       }
       if (cappedTo >= latest) break;
     }

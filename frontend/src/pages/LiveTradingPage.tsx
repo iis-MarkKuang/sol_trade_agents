@@ -489,7 +489,9 @@ export function LiveTradingPage() {
                 <div className="mb-1 flex items-center justify-between">
                   <span className="font-semibold text-violet-200">Agent plan</span>
                   <span className="text-slate-500">
-                    {nlPlan.llmUsed ? `LLM · ${nlPlan.toolCallCount} tool call(s)` : "deterministic fallback"}
+                    {nlPlan.llmUsed
+                      ? `LLM${nlPlan.model ? ` · ${nlPlan.model.split("/").pop()}` : ""} · ${nlPlan.toolCallCount} tool call(s)`
+                      : "deterministic fallback"}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap text-slate-300">{nlPlan.analysis}</p>
@@ -679,14 +681,20 @@ function AgentIdentitySection({
                   <div className="mt-1 text-slate-500">
                     id {a.agentId} · builder <span className="text-slate-300">{a.builderCode || "—"}</span>
                   </div>
-                  <a
-                    href={a.scanUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sky-300 underline decoration-dotted underline-offset-2"
-                  >
-                    view ↗
-                  </a>
+                  {a.real ? (
+                    <a
+                      href={a.scanUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-300 underline decoration-dotted underline-offset-2"
+                    >
+                      view ↗
+                    </a>
+                  ) : (
+                    <span className="text-slate-500">Simulated sample (not registered on-chain) · enable{" "}
+                      <code className="text-slate-400">INJECTIVE_AGENT_REGISTRY_ENABLED=true</code> for a live scan
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

@@ -164,6 +164,7 @@ export interface CrossChainPlanResponse {
   analysis: string;
   toolCallCount: number;
   llmUsed: boolean;
+  model?: string;
 }
 
 export interface InjectiveExecuteResponse {

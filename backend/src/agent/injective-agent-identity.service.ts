@@ -1,9 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
-import {
-  InjectiveRegistryReader,
-  RawAgentData,
-} from './injective-registry.viem';
+import { InjectiveRegistryReader, RawAgentData } from './injective-registry.viem';
 import {
   AgentCardDto,
   AgentIdentityDto,
@@ -47,11 +44,16 @@ export class InjectiveAgentIdentityService {
       {
         type: 'MCP',
         endpoint: cfg.mcpPublicUrl,
-        description: 'Cross-chain quant tools: query_nbbo, propose_arb, execute_injective, get_agent_identity',
+        description:
+          'Cross-chain quant tools: query_nbbo, propose_arb, execute_injective, get_agent_identity',
       },
     ];
     if (cfg.a2aPublicUrl) {
-      services.push({ type: 'A2A', endpoint: cfg.a2aPublicUrl, description: 'Agent-to-agent endpoint' });
+      services.push({
+        type: 'A2A',
+        endpoint: cfg.a2aPublicUrl,
+        description: 'Agent-to-agent endpoint',
+      });
     }
 
     const card: AgentCardDto = {
@@ -94,7 +96,9 @@ export class InjectiveAgentIdentityService {
             mcpEndpoint: cfg.mcpPublicUrl,
           };
         }
-        this.logger.warn(`INJECTIVE_AGENT_ID=${cfg.agentId} not found on registry; falling back to simulated identity`);
+        this.logger.warn(
+          `INJECTIVE_AGENT_ID=${cfg.agentId} not found on registry; falling back to simulated identity`,
+        );
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(`Real identity lookup failed: ${msg}; falling back to simulated identity`);
@@ -111,7 +115,7 @@ export class InjectiveAgentIdentityService {
       type: cfg.type,
       builderCode: cfg.builderCode,
       cardUri: `ipfs://simulated/${simId}`,
-      scanUrl: `https://agents.injective.com/agent/${simId}`,
+      scanUrl: `https://agents.injective.com/registry/${simId}`,
       card,
       registered: false,
       simulated: true,
@@ -155,11 +159,19 @@ export class InjectiveAgentIdentityService {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(`Live registry scan failed: ${msg}; returning samples`);
-        return this.mockRegistry(safeOffset, safeLimit, `Live registry unreachable (${msg}); showing sample agents.`);
+        return this.mockRegistry(
+          safeOffset,
+          safeLimit,
+          `Live registry unreachable (${msg}); showing sample agents.`,
+        );
       }
     }
 
-    return this.mockRegistry(safeOffset, safeLimit, 'Registry browse is disabled (set INJECTIVE_AGENT_REGISTRY_ENABLED=true for a live scan). Showing sample agents.');
+    return this.mockRegistry(
+      safeOffset,
+      safeLimit,
+      'Registry browse is disabled (set INJECTIVE_AGENT_REGISTRY_ENABLED=true for a live scan). Showing sample agents.',
+    );
   }
 
   private async enrichRegistryAgent(id: bigint): Promise<RegistryAgentDto | null> {
@@ -194,32 +206,28 @@ export class InjectiveAgentIdentityService {
   /** Best-effort fetch of an Agent Card JSON from ipfs:// or https:// URIs. */
   private async fetchAgentCard(tokenUri: string): Promise<AgentCardDto | null> {
     if (!tokenUri) return null;
-    const url = toGatewayUrl(tokenUri);
-    if (!url) return null;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8_000);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) return null;
-      const json = (await res.json()) as Partial<AgentCardDto> & { services?: unknown };
-      if (!json || typeof json !== 'object') return null;
-      const services = Array.isArray(json.services) ? (json.services as AgentServiceEntry[]) : [];
-      return {
-        name: typeof json.name === 'string' ? json.name : 'Unnamed Agent',
-        description: typeof json.description === 'string' ? json.description : '',
-        type: typeof json.type === 'string' ? json.type : 'other',
-        builderCode: typeof json.builderCode === 'string' ? json.builderCode : '',
-        image: typeof json.image === 'string' ? json.image : undefined,
-        x402: Boolean(json.x402),
-        services,
-        version: typeof json.version === 'string' ? json.version : undefined,
-        tags: Array.isArray(json.tags) ? (json.tags as string[]) : undefined,
-      };
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
+    const urls = toGatewayUrls(tokenUri);
+    if (urls.length === 0) return null;
+
+    // Try each gateway in turn; the first one that returns valid JSON wins.
+    // (w3s.link 301-redirects CIDv1 to a subdomain gateway, which can blow a
+    // tight timeout — so we fall back to ipfs.io / dweb.link etc.)
+    for (const url of urls) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6_000);
+      try {
+        const res = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+        if (!res.ok) continue;
+        const json = (await res.json()) as Record<string, unknown>;
+        if (!json || typeof json !== 'object') continue;
+        return normalizeAgentCard(json);
+      } catch {
+        // try next gateway
+      } finally {
+        clearTimeout(timer);
+      }
     }
+    return null;
   }
 
   private mockRegistry(offset: number, limit: number, note: string): RegistryListDto {
@@ -311,11 +319,59 @@ function deterministicAgentId(builderCode: string, salt: string): bigint {
   return (h & 0xffffffffffffn) + 1n;
 }
 
-function toGatewayUrl(tokenUri: string): string | null {
-  if (tokenUri.startsWith('http://') || tokenUri.startsWith('https://')) return tokenUri;
+// Public IPFS gateways tried in order. ipfs.io serves CIDv1 directly with a 200
+// (no redirect dance), so it goes first; the rest are fallbacks.
+const IPFS_GATEWAYS = [
+  'https://ipfs.io/ipfs',
+  'https://dweb.link/ipfs',
+  'https://w3s.link/ipfs',
+  'https://gateway.pinata.cloud/ipfs',
+];
+
+function toGatewayUrls(tokenUri: string): string[] {
+  if (tokenUri.startsWith('http://') || tokenUri.startsWith('https://')) return [tokenUri];
   if (tokenUri.startsWith('ipfs://')) {
-    const path = tokenUri.slice('ipfs://'.length);
-    return `https://w3s.link/ipfs/${path}`;
+    const path = tokenUri.slice('ipfs://'.length).replace(/^ipfs\//, '');
+    return IPFS_GATEWAYS.map((gw) => `${gw}/${path}`);
   }
-  return null;
+  return [];
+}
+
+/**
+ * Map a raw ERC-8004 `registration-v1` card (as stored on IPFS by the Injective
+ * Agent CLI) into our AgentCardDto.
+ *
+ * Real cards differ from our internal shape:
+ *  - top-level `type` is the schema URL; the real category lives in `agentType`
+ *  - service entries key their protocol under `name` (e.g. "MCP"/"web"/"OASF"),
+ *    not `type`
+ *  - x402 support is under `x402Support`
+ */
+function normalizeAgentCard(json: Record<string, unknown>): AgentCardDto {
+  const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
+  const rawServices = Array.isArray(json.services)
+    ? (json.services as Record<string, unknown>[])
+    : [];
+  const services: AgentServiceEntry[] = rawServices.map((s) => ({
+    type: str(s.type) || str(s.name) || 'service',
+    endpoint: str(s.endpoint) || str(s.url),
+    description: str(s.description) || undefined,
+  }));
+
+  // Prefer the explicit agent category; ignore the schema-URL `type`.
+  const schemaType = str(json.type);
+  const category =
+    str(json.agentType) || (schemaType.startsWith('http') ? 'other' : schemaType || 'other');
+
+  return {
+    name: str(json.name, 'Unnamed Agent'),
+    description: str(json.description),
+    type: category,
+    builderCode: str(json.builderCode),
+    image: str(json.image) || undefined,
+    x402: Boolean(json.x402Support ?? json.x402),
+    services,
+    version: str(json.version) || undefined,
+    tags: Array.isArray(json.tags) ? (json.tags as string[]) : undefined,
+  };
 }
