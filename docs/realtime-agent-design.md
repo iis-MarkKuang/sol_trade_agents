@@ -3,6 +3,8 @@
 ## Overview
 The Realtime Agent System is responsible for handling real-time trading with nBBO (National Best Bid/Offer) price optimization across multiple Solana DEXs.
 
+> **Note:** For a broader codebase guide, see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
+
 ## Core Components
 
 ### 1. Backend API & WebSocket Setup

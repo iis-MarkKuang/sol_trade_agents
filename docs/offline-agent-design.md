@@ -3,6 +3,8 @@
 ## Overview
 This document provides a comprehensive design of the Solana Frontier Offline Trading Agent system, including architecture, data models, workflows, and implementation details.
 
+> **Note:** For a broader codebase guide, see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
+
 ## Directory Structure
 ```
 backend/

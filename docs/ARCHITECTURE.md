@@ -3,6 +3,8 @@
 ## Overview
 This project is a Web3 LLM agent platform for autonomous Solana trading, similar to b.ai. It combines AI-driven insights, real-time market data, and on-chain execution.
 
+> **Note:** For a detailed code-level directory walkthrough, please refer to [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
+
 ## Tech Stack
 
 ### Frontend (`/frontend`)

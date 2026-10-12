@@ -11,6 +11,7 @@ A Web3 LLM agent platform for autonomous Solana trading, similar to b.ai, combin
 sol_trade_agent/
 ├── docs/                      # Documentation
 │   ├── ARCHITECTURE.md        # High-level system architecture
+│   ├── CODE_WALKTHROUGH.md    # Codebase walkthrough and directory guide
 │   ├── offline-agent-design.md  # Detailed offline agent design
 │   ├── realtime-agent-design.md # Detailed realtime agent design
 │   └── progress-tracker.md    # Project progress tracking
@@ -272,6 +273,8 @@ npm run test:all          # Run both Jest and Vitest
 
 ## 📚 Documentation
 
+- [AI Agent Rules & Guidelines](/docs/AGENTS.md)
+- [Codebase Walkthrough](/docs/CODE_WALKTHROUGH.md)
 - [High-level System Architecture](/docs/ARCHITECTURE.md)
 - [Offline Agent Detailed Design](/docs/offline-agent-design.md)
 - [Realtime Agent Detailed Design](/docs/realtime-agent-design.md)

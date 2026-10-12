@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Solana × Injective 跨链量化 Agent · 路演简报</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0e1a;
+    --panel: #131a2c;
+    --panel2: #1a2238;
+    --accent: #14f195;
+    --accent2: #6366f1;
+    --inj: #00d2ff;
+    --text: #e8edf7;
+    --muted: #9aa6c2;
+    --line: rgba(255,255,255,0.08);
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    font-size: 11pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 14mm 16mm;
+    page-break-after: always;
+    position: relative;
+    background:
+      radial-gradient(900px 500px at 100% 0%, rgba(99,102,241,0.18), transparent 60%),
+      radial-gradient(700px 500px at 0% 100%, rgba(20,241,149,0.12), transparent 60%),
+      var(--bg);
+  }
+  .page:last-child { page-break-after: auto; }
+
+  /* ---- Cover ---- */
+  .cover { display: flex; flex-direction: column; justify-content: space-between; }
+  .cover .top { display:flex; align-items:center; gap:10px; }
+  .logo {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), var(--inj));
+    display:flex; align-items:center; justify-content:center;
+    font-weight: 800; color: #06231a; font-size: 16px;
+  }
+  .brand { font-size: 12pt; font-weight: 600; letter-spacing: .5px; }
+  .brand span { color: var(--muted); font-weight: 400; }
+  .cover .hero { margin-top: 26mm; }
+  .pill {
+    display:inline-block; padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--accent);
+    font-size: 9pt; letter-spacing: 1px; margin-bottom: 18px;
+    background: rgba(20,241,149,0.06);
+  }
+  h1.title {
+    font-size: 33pt; line-height: 1.12; font-weight: 800; letter-spacing: -0.5px;
+    background: linear-gradient(90deg, #fff, #9bb4ff 60%, var(--inj));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--muted); font-size: 13pt; margin-top: 14px; max-width: 150mm; }
+  .cover .chips { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; }
+  .chip {
+    padding: 6px 12px; border-radius: 8px; font-size: 9pt;
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  }
+  .cover .meta {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    border-top: 1px solid var(--line); padding-top: 16px; margin-top: 10mm;
+  }
+  .meta .k { font-size: 8pt; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .meta .v { font-size: 10.5pt; font-weight: 600; margin-top: 3px; }
+
+  /* ---- Section headings ---- */
+  .sec-head { display:flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .sec-num {
+    font-size: 11pt; font-weight: 700; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 1px 8px;
+  }
+  h2 { font-size: 18pt; font-weight: 700; letter-spacing: -0.3px; }
+  .lede { color: var(--muted); font-size: 10.5pt; margin-bottom: 14px; max-width: 175mm; }
+
+  /* ---- Cards ---- */
+  .grid { display: grid; gap: 10px; }
+  .g2 { grid-template-columns: 1fr 1fr; }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .card h3 { font-size: 11pt; margin-bottom: 6px; color: #fff; display:flex; align-items:center; gap:8px; }
+  .card h3 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .card p, .card li { font-size: 9.5pt; color: var(--muted); }
+  .card ul { padding-left: 14px; }
+  .card li { margin: 3px 0; }
+  .card li b, .card p b { color: var(--text); font-weight: 600; }
+
+  /* ---- Pain / Solution ---- */
+  .pain-list { list-style: none; padding: 0; }
+  .pain-list li {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent2); border-radius: 8px;
+    padding: 9px 12px; margin-bottom: 7px; font-size: 9.5pt;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .pain-list li .x { color: #ff6b6b; font-weight: 700; }
+  .pain-list li .ok { color: var(--accent); font-weight: 700; }
+  .pain-list li .body { flex: 1; }
+  .pain-list li .body b { color: #fff; }
+
+  /* ---- Timeline ---- */
+  .tl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 8px; }
+  .tl .item {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; position: relative; border-top: 3px solid var(--accent);
+  }
+  .tl .q { font-size: 8pt; color: var(--inj); font-weight: 700; letter-spacing: 1px; }
+  .tl .t { font-size: 11pt; font-weight: 700; margin: 4px 0 6px; color: #fff; }
+  .tl .d { font-size: 9pt; color: var(--muted); }
+
+  /* ---- Market table ---- */
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .5px; }
+  td b { color: #fff; }
+  .tag { padding: 2px 8px; border-radius: 999px; font-size: 8pt; font-weight: 600; }
+  .tag.good { background: rgba(20,241,149,0.15); color: var(--accent); }
+  .tag.mid  { background: rgba(99,102,241,0.18); color: #9bb4ff; }
+
+  /* ---- Tech stack pills ---- */
+  .stack { display:flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .stack span {
+    font-size: 8.5pt; padding: 4px 9px; border-radius: 6px;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+  }
+
+  /* ---- Team ---- */
+  .team-card { display: grid; grid-template-columns: 50mm 1fr; gap: 14px; align-items: start; }
+  .avatar {
+    width: 44mm; height: 44mm; border-radius: 14px;
+    background: linear-gradient(135deg, var(--accent2), var(--inj));
+    display:flex; align-items:center; justify-content:center;
+    font-size: 28pt; font-weight: 800; color: #fff;
+  }
+  .team-info h3 { font-size: 15pt; }
+  .team-info .role { color: var(--accent); font-size: 10pt; font-weight: 600; margin: 2px 0 8px; }
+  .team-info .bio { color: var(--muted); font-size: 9.5pt; }
+  .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-top: 12px; }
+  .stats .s { background: var(--panel); border:1px solid var(--line); border-radius: 8px; padding: 9px; text-align:center; }
+  .stats .n { font-size: 16pt; font-weight: 800; color: #fff; }
+  .stats .l { font-size: 8pt; color: var(--muted); margin-top: 2px; }
+
+  .footer {
+    position: absolute; bottom: 8mm; left: 16mm; right: 16mm;
+    display:flex; justify-content: space-between; font-size: 8pt; color: var(--muted);
+    border-top: 1px solid var(--line); padding-top: 6px;
+  }
+  .hl { color: var(--accent); }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 8.5pt; color: var(--accent); }
+
+  .flow { display:flex; align-items:center; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; }
+  .flow .node {
+    background: var(--panel2); border:1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; font-size: 8.5pt; color: var(--text);
+  }
+  .flow .node.inj { border-color: var(--inj); color: var(--inj); }
+  .flow .node.sol { border-color: var(--accent); color: var(--accent); }
+  .flow .arr { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ============ PAGE 1: COVER ============ -->
+<section class="page cover">
+  <div class="top">
+    <div class="logo">S×I</div>
+    <div class="brand">Solana × Injective 跨链量化 Agent <span>· Nova Program 参赛作品</span></div>
+  </div>
+
+  <div class="hero">
+    <div class="pill">INJECTIVE NOVA PROGRAM · PITCH BRIEF</div>
+    <h1 class="title">跨链 nBBO 套利<br>与 AI 量化助手</h1>
+    <p class="subtitle">一个可被其他 Agent 发现并调用的链上量化 Agent —— 在 Solana 与 Injective 之间聚合最优报价、捕捉套利机会，并以自然语言驱动跨链交易计划。</p>
+    <div class="chips">
+      <div class="chip">Cross-Chain nBBO</div>
+      <div class="chip">ERC-8004 Agent Identity</div>
+      <div class="chip">MCP Server (双向)</div>
+      <div class="chip">LangChain Tools</div>
+      <div class="chip">Helix 真实行情</div>
+      <div class="chip">Testnet · 零资金风险</div>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div><div class="k">Founder</div><div class="v">匡原 Yuan Kuang</div></div>
+    <div><div class="k">Track</div><div class="v">Agent Infrastructure</div></div>
+    <div><div class="k">Stack</div><div class="v">NestJS · LangChain · viem</div></div>
+    <div><div class="k">Contact</div><div class="v">kuangyuan1991@gmail.com</div></div>
+  </div>
+
+  <div class="footer">
+    <span>Solana Frontier Web3 LLM Trading Agent</span>
+    <span>路演简报 v1.0 · 2026.07</span>
+  </div>
+</section>
+
+<!-- ============ PAGE 2: PROJECT + PRODUCT ============ -->
+<section class="page">
+  <div class="sec-head"><span class="sec-num">02</span><h2>项目简介 & 产品与解决方案</h2></div>
+  <p class="lede">将原本只服务 Solana 的量化 Agent 升级为 <b>链无关(chain-agnostic)</b> 的跨链交易大脑:在 Solana DEX 与 Injective Helix 之间聚合单一最优报价(nBBO),扫描跨链价差,并对外暴露标准化 MCP 接口供其他链上 Agent 调用。</p>
+
+  <div class="grid g2" style="margin-bottom:10px">
+    <div class="card">
+      <h3><span class="dot"></span>核心能力</h3>
+      <ul>
+        <li><b>跨链 nBBO 聚合</b>:fan-out 到 Jupiter/Raydium/Orca + Injective Helix,产出单一最优买卖盘</li>
+        <li><b>跨链套利扫描</b>:BTC/ETH 等共有资产中间价 − 桥成本 = 净 edge(bps)</li>
+        <li><b>自然语言量化助手</b>:LLM 通过 LangChain tools 调用 nBBO / 套利 / 身份查询,生成跨链计划</li>
+        <li><b>Injective 执行层</b>:命中 Injective 路由时经官方 MCP server 签名广播</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot"></span>双向 Agent 身份</h3>
+      <ul>
+        <li><b>消费方</b>:调用 Injective 官方 MCP server 完成下单</li>
+        <li><b>提供方</b>:在 Injective Agent Registry 注册 ERC-8004 身份卡,声明 services</li>
+        <li><b>对外暴露 MCP server</b>(Streamable HTTP <code>/mcp</code>),4 个标准工具</li>
+        <li>任何 Injective Agent 都可按卡片发现并调用我们</li>
+      </ul>
+      <div class="stack" style="margin-top:10px">
+        <span>query_cross_chain_nbbo</span>
+        <span>propose_arb_plan</span>
+        <span>execute_injective_trade</span>
+        <span>get_agent_identity</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3><span class="dot"></span>系统数据流</h3>
+    <div class="flow">
+      <div class="node">Pyth 共享预言机</div><span class="arr">→</span>
+      <div class="node sol">Solana DEX adapters</div><span class="arr">+</span>
+      <div class="node inj">Injective Helix</div><span class="arr">→</span>
+      <div class="node">Aggregator</div><span class="arr">→</span>
+      <div class="node hl" style="border-color:var(--accent)">跨链 nBBO</div><span class="arr">→</span>
+      <div class="node">RealTimeAgentCore</div>
+    </div>
+    <div class="flow">
+      <div class="node sol">chain=solana → Jupiter tx</div><span class="arr">|</span>
+      <div class="node inj">chain=injective → MCP Server 签名</div><span class="arr">←</span>
+      <div class="node">NL Agent (LangChain tools)</div>
+    </div>
+  </div>
+
+  <div class="sec-head" style="margin-top:18px"><span class="sec-num">03</span><h2>技术亮点</h2></div>
+  <div class="grid g3">
+    <div class="card"><h3><span class="dot"></span>链抽象执行</h3><p>统一 <code>DexSource/DexQuote.chain</code>,nBBO 选路后按链派发执行器,Injective 走 MCP、Solana 走 Jupiter。</p></div>
+    <div class="card"><h3><span class="dot"></span>ERC-8004 身份</h3><p>直读 Injective Identity Registry(viem),支持真链上卡 / 确定性模拟卡,可被 agents.injective.com 发现。</p></div>
+    <div class="card"><h3><span class="dot"></span>标准 MCP 双向</h3><p>既消费官方 MCP server 执行,又对外暴露 Streamable HTTP MCP server,4 个工具,Agent 互调闭环。</p></div>
+    <div class="card"><h3><span class="dot"></span>风控策略引擎</h3><p>滑点 / 名义仓位 / 流动性 / 预言机偏差 / 报价时效 / 价格冲击 全部可配置上限,自动拒绝不合规路由。</p></div>
+    <div class="card"><h3><span class="dot"></span>LLM 多 Provider</h3><p>统一 factory 支持 OpenAI / Azure(可花 Nova Azure 额度)/ OpenRouter,无密钥自动降级确定性 mock。</p></div>
+    <div class="card"><h3><span class="dot"></span>Demo 零风险</h3><p>testnet + Mock 执行器 + mock DEX,Helix 拉真行情,Jest(20)+Vitest(3) 全绿。</p></div>
+  </div>
+
+  <div class="footer"><span>Solana × Injective Cross-Chain Quant Agent</span><span>02 / 04</span></div>
+</section>
+
+<!-- ============ PAGE 3: PAIN + MARKET ============ -->
+<section class="page">
+  <div class="sec-head"><span class="sec-num">04</span><h2>痛点与解决方案</h2></div>
+  <ul class="pain-list">
+    <li><span class="x">✕</span><div class="body"><b>链间流动性割裂</b> — Solana 与 Injective 各自盘口无法互通,同一资产存在持续价差却难以捕获。<span class="ok">→</span> 跨链 nBBO 聚合 + 套利扫描,自动定位最优买卖方向。</div></li>
+    <li><span class="x">✕</span><div class="body"><b>Agent 之间无法互调</b> — 链上 Agent 各自为政,缺乏标准身份与服务发现机制。<span class="ok">→</span> ERC-8004 身份卡 + 对外 MCP server,任何 Injective Agent 可发现并调用我们。</div></li>
+    <li><span class="x">✕</span><div class="body"><b>量化门槛高</b> — 普通用户难以编写跨链套利逻辑。<span class="ok">→</span> 自然语言指令经 LangChain tools 转化为可执行跨链计划,带 tool-call 留痕可审计。</div></li>
+    <li><span class="x">✕</span><div class="body"><b>执行风险难控</b> — 滑点、预言机偏差、报价时效难以统一约束。<span class="ok">→</span> 风控引擎对六维度上限硬校验,超限路由直接拒绝。</div></li>
+  </ul>
+
+  <div class="sec-head" style="margin-top:16px"><span class="sec-num">05</span><h2>市场与竞争分析</h2></div>
+  <table>
+    <thead><tr><th>维度</th><th>传统单链量化</th><th>通用 MEV Bot</th><th>本方案 (Ours)</th></tr></thead>
+    <tbody>
+      <tr><td><b>跨链报价聚合</b></td><td>单链,无</td><td>单链,无</td><td><span class="tag good">Solana + Injective nBBO</span></td></tr>
+      <tr><td><b>Agent 身份/发现</b></td><td>无</td><td>无</td><td><span class="tag good">ERC-8004 链上卡</span></td></tr>
+      <tr><td><b>对外 MCP 接口</b></td><td>无</td><td>无</td><td><span class="tag good">Streamable HTTP, 4 工具</span></td></tr>
+      <tr><td><b>自然语言驱动</b></td><td>脚本/策略代码</td><td>硬编码</td><td><span class="tag mid">LLM + 可审计 tool-call</span></td></tr>
+      <tr><td><b>风控可配置</b></td><td>弱</td><td>弱</td><td><span class="tag good">6 维度硬校验</span></td></tr>
+      <tr><td><b>定位赛道</b></td><td>Solana DEX 工具</td><td>MEV 套利</td><td><span class="tag good">Injective Agent 基础设施</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="grid g3" style="margin-top:12px">
+    <div class="card"><h3><span class="dot"></span>市场机会</h3><p>Solana 日均 DEX 交易量稳居链上前二;Injective 作为 RWA + 衍生品专用链,Helix 流动性持续增长,跨链价差常态化存在。</p></div>
+    <div class="card"><h3><span class="dot"></span>竞争壁垒</h3><p>不是更快 Bot,而是 <b>Agent 互操作层</b>:既是 Injective MCP 消费者,又是可被发现的 MCP 提供者,卡位 Agent-to-Agent 经济。</p></div>
+    <div class="card"><h3><span class="dot"></span>差异定位</h3><p>对标 b.ai 式 LLM 交易 Agent,但从"单链下单"升级为"跨链套利 + 可被调用",契合 Nova <i>Agent Infrastructure</i> 方向。</p></div>
+  </div>
+
+  <div class="footer"><span>Solana × Injective Cross-Chain Quant Agent</span><span>03 / 04</span></div>
+</section>
+
+<!-- ============ PAGE 4: TEAM + ROADMAP ============ -->
+<section class="page">
+  <div class="sec-head"><span class="sec-num">06</span><h2>团队介绍</h2></div>
+  <div class="team-card">
+    <div class="avatar">匡</div>
+    <div class="team-info">
+      <h3>匡原 Yuan Kuang</h3>
+      <div class="role">创始人 · 高级后端工程师 / 系统架构师</div>
+      <p class="bio">13 年后端与系统架构经验,深耕 <b>AI 推理加速、LLM-Ops、微服务</b>。曾任职 <b>蚂蚁集团(支付宝首页推荐 / 15K QPS 召回)</b>、<b>途虎养车(Triton 推理平台,延迟降 40%)</b>、<b>平安壹账通、GoStudy</b>;近任 Subtle Computing 全栈工程师,主导实时语音 AI 后端(P95 &lt; 5ms, 1000+ 并发流)。华东师大本科,利物浦大学大数据分析研究生证书。</p>
+      <div class="stats">
+        <div class="s"><div class="n">13+</div><div class="l">年工程经验</div></div>
+        <div class="s"><div class="n">15K</div><div class="l">QPS 召回系统</div></div>
+        <div class="s"><div class="n">3</div><div class="l">开源 PR 合并</div></div>
+        <div class="s"><div class="n">EN/JP</div><div class="l">语言能力</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:12px">
+    <div class="card"><h3><span class="dot"></span>AI / 推理</h3><p>Triton / Ray Serve / TensorRT 量化;LLM 全生命周期;Triton、Ray Serve 社区活跃。</p></div>
+    <div class="card"><h3><span class="dot"></span>系统 / 后端</h3><p>Java / Python / Go;Spring Cloud 微服务;K8s + Istio;MySQL / Cassandra / Kafka。</p></div>
+    <div class="card"><h3><span class="dot"></span>开源贡献</h3><p>MLflow(已合并 PR)、Spring Cloud Gateway(限流性能 +20%);Triton / Automerge 社区参与。</p></div>
+  </div>
+
+  <div class="sec-head" style="margin-top:16px"><span class="sec-num">07</span><h2>未来路线图</h2></div>
+  <p class="lede">从 Nova Demo 出发,分四步走向可持续的跨链 Agent 基础设施。</p>
+  <div class="tl">
+    <div class="item"><div class="q">Q3 2026 · NOW</div><div class="t">MVP 上线</div><div class="d">Nova 提交:跨链 nBBO + ERC-8004 身份 + 对外 MCP server;testnet 模拟执行零风险。</div></div>
+    <div class="item"><div class="q">Q4 2026</div><div class="t">真实执行</div><div class="d">接入 Solana 真实行情(Helius/QuickNode)+ Injective mainnet 真签名;风控上限动态可调。</div></div>
+    <div class="item"><div class="q">Q1 2027</div><div class="t">Agent 网络</div><div class="d">支持更多 Injective Agent 互调;A2A 协议对接;按调用计费的 Agent 市场。</div></div>
+    <div class="item"><div class="q">Q2 2027+</div><div class="t">进化远景</div><div class="d">多链扩展(Ethereum/Base),自学习套利策略,RWA 衍生品组合,形成自主量化 Agent 集群。</div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3><span class="dot"></span>进化远景</h3>
+    <p>终局不是"又一个套利 Bot",而是一张 <b>可被任何链上 Agent 调用的跨链量化能力网</b>:每个 Agent 贡献一类专长(报价、套利、风控、执行),通过 MCP/ERC-8004 自由组合,LLM 作为调度大脑。我们的 Agent 是这张网的第一个节点 —— 也是 Nova 想要的 <b>Agent Infrastructure</b> 范式样本。</p>
+  </div>
+
+  <div class="footer"><span>kuangyuan1991@gmail.com · +86 15221521960 · 上海</span><span>04 / 04</span></div>
+</section>
+
+</body>
+</html>
