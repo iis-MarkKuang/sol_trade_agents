@@ -1,109 +1,78 @@
 # Project Progress Tracker
 
-## Offline Agent Demo - Todo List
+Status is based on verified runtime behavior, not file presence.
 
-| # | Task | Priority | Progress |
-|---|------|----------|----------|
-| 1 | Implement basic crawlers module (CoinMarketCap, TradingView, Dune) | High | ✅ Completed |
-| 2 | Create data processing module (cleaner, normalizer) | High | ✅ Completed |
-| 3 | Implement basic LLM agent (LangChain) | High | ✅ Completed |
-| 4 | Create strategy engine module (base interface + one simple strategy) | High | ✅ Completed |
-| 5 | Implement BullMQ scheduler for periodic jobs | High | ✅ Completed |
-| 6 | Add basic REST API endpoints for fetching market data, analysis, signals | Medium | ✅ Completed |
-| 7 | Create simple in-memory notification service | Medium | ✅ Completed (WebSocket /offline feed) |
-| 8 | Add health check endpoint (already partially exists) | Low | ✅ Completed |
+Legend: `Done`, `Partial`, `Demo`, `Not started`, `Blocked by OP`.
 
----
+## Packet 0: Truthful Prototype
 
-## Realtime Agent Todo List
+| Deliverable | Status | Evidence / next action |
+|---|---|---|
+| Single NestJS runtime | Done | `backend/src/main.ts`; obsolete standalone server removed |
+| Canonical domain APIs | Done | Offline under `/agent`, online under `/realtime` |
+| Architecture and walkthrough | Done | `ARCHITECTURE.md`, `CODE_WALKTHROUGH.md` |
+| Explicit live/mock provenance | Not started | Add environment/source fields to persisted objects |
+| Live mode fails closed | Not started | Remove automatic mock fallback from live policy |
+| Authenticated write APIs | Not started | Required before any public deployment |
+| Guarded trade-state transitions | Not started | Replace client-authoritative confirmation |
 
-| # | Task | Priority | Progress |
-|---|------|----------|----------|
-| 1 | Backend API & WebSocket Setup | High | ✅ Completed |
-| 2 | Pyth Price Feeds Integration | High | ✅ Completed |
-| 3 | DEX Order Book Aggregation (Jupiter, Raydium, Orca) | High | ✅ Completed |
-| 4 | nBBO Engine Implementation | High | ✅ Completed |
-| 5 | Real-time Agent Core | High | ✅ Completed |
-| 6 | Smart Contracts (Anchor) | High | ✅ Completed |
-| 7 | Frontend Integration | Medium | ✅ Completed |
-| 8 | Database & Logging Extensions | Low | ✅ Completed |
+## Packet 1: Offline Research Foundation
 
-### Realtime Backend API & WebSocket Implementation Notes
+| Deliverable | Status | Evidence / next action |
+|---|---|---|
+| CMC/CoinGecko ingestion | Partial | Live with static fallback |
+| TradingView ingestion | Demo | Hard-coded rows |
+| Dune ingestion | Demo | Hard-coded rows |
+| Cleaning | Partial | Basic duplicate/negative-value filters |
+| Normalization/features | Demo | Pass-through implementation |
+| LLM summary | Partial | Configurable model with generic fallback |
+| Deterministic strategy | Demo | RSI threshold only |
+| Point-in-time dataset | Not started | Needed before meaningful backtests |
+| Backtest and walk-forward gate | Not started | `BacktestResult` currently unused |
+| Versioned, expiring signal | Not started | Define signal contract and durable outbox |
 
-NestJS module `backend/src/realtime/` adds the missing wiring around the
-already-implemented Pyth feeds, DEX adapters, nBBO engine and risk engine:
+## Packet 2: Paper-Trading Engine
 
-- `realtime.module.ts` registers everything under `RealtimeModule` and exposes
-  `RealtimeService` + `RealtimeGateway`.
-- `realtime.service.ts` bootstraps `RealTimeAgentCore`, the DEX aggregator and
-  the Pyth subscription using `ConfigService`. It drives the lifecycle:
-  persist intent → run nBBO + risk → emit lifecycle events → optionally accept
-  off-chain execution confirmation (`submitted` / `confirmed` / `failed`).
-- `realtime.controller.ts` REST endpoints:
-  - `GET  /realtime/health`
-  - `GET  /realtime/market/nbbo`
-  - `POST /realtime/trade/prepare`
-  - `POST /realtime/trade/confirm`
-  - `GET  /realtime/trades` / `GET /realtime/trades/:id`
-- `realtime.gateway.ts` Socket.IO gateway on namespace `/realtime` with
-  `trade.event`, `trade.feed` and `price.update` channels, plus rooms
-  `subscribe.trade` / `subscribe.prices`.
+| Deliverable | Status | Evidence / next action |
+|---|---|---|
+| Pyth parser and subscription | Partial | Works, but reconnect/heartbeat/fallback need hardening |
+| DEX adapter abstraction | Done | Jupiter, Raydium, Orca, Injective, mock |
+| Adapter production validation | Not started | Add real payload fixtures and integration tests |
+| nBBO route selection | Done | Highest bid / lowest ask |
+| Basic pre-trade risk | Partial | Missing portfolio, loss, exposure, and open-order checks |
+| Trade persistence/events | Partial | Demo lifecycle persisted and broadcast |
+| Paper executor | Demo | UI and Injective mock can synthesize statuses/hashes |
+| Idempotent state machine | Not started | Required for continuous operation |
+| Position/PnL ledger | Not started | Required for sizing and reconciliation |
+| Operational metrics | Not started | Define latency and error SLOs after OP-02 |
 
-### Realtime Database & Logging Extensions
+## Packet 3: Solana Testnet Execution
 
-`prisma/schema.prisma` now contains two additional models:
+| Deliverable | Status | Evidence / next action |
+|---|---|---|
+| Jupiter unsigned transaction | Partial | Builder exists |
+| Wallet signing isolation | Not started | Blocked by custody decision OP-03 |
+| Simulation and submission | Not started | Add idempotent submitter |
+| RPC endpoint fallback | Not started | Multiple providers and backoff required |
+| Confirmation/finality reconciler | Not started | Must be independent of client |
+| Balance reservation | Not started | Prevent concurrent overspend |
+| Anchor guardrail program | Demo | Compiles, no tests, not called by backend |
 
-- `RealtimeTrade` — persisted trade lifecycle (intent, plan, selectedDex,
-  oraclePrice, executionPrice, txSignature, status, …).
-- `RealtimeAgentLog` — structured events with optional `tradeId` FK back to
-  `RealtimeTrade`, used by `RealtimeTradeRepository.log(...)`.
+## Packet 4: Limited Production
 
-`ConfigService` also exposes a `realtime` config block driven by the standard
-env vars (`SOLANA_RPC_URL`, `ENABLE_REAL_DEX`, `PYTH_*`, `MAX_*`, …).
+| Deliverable | Status |
+|---|---|
+| Strategy promotion criteria | Blocked by OP |
+| Capital and loss limits | Blocked by OP |
+| Kill switches and alerts | Not started |
+| Incident/runbook documentation | Not started |
+| Small capped mainnet rollout | Blocked by OP |
 
----
+## Deferred Scope
 
-## Offline Agent Implementation Notes
+Injective identity, MCP interoperability, and cross-chain arbitrage remain
+experimental. Cross-chain live execution should begin only after single-chain
+submission, reconciliation, accounting, and incident handling are reliable.
 
-The full offline pipeline lives in `backend/src/scheduler/` and is the single
-source of truth (the BullMQ scheduler delegates to the same service):
-
-- `OfflineAgentService.runPipeline()` — runs the end-to-end crawl → clean →
-  normalize → LLM → strategy pipeline and returns a `PipelineSummary`.
-  Persists `AnalysisResult` (with `content` + `type=MARKET_OVERVIEW`) and
-  per-strategy `TradeSignal` rows; emits `pipeline.started` /
-  `pipeline.completed` / `pipeline.failed` events through `OfflineAgentGateway`.
-- `SchedulerService` — only starts the BullMQ queue when
-  `ENABLE_SCHEDULER=true`; otherwise the pipeline is manual-only. The
-  `triggerPipelineNow()` helper enqueues when BullMQ is running and runs inline
-  when it isn't, so the demo always works without Redis.
-- `OfflineAgentController` — `/agent` REST surface:
-  - `GET  /agent/status`
-  - `POST /agent/run-pipeline`     ← runs inline, returns summary
-  - `POST /agent/schedule-pipeline` ← enqueues via BullMQ if available
-  - `GET  /agent/market-data?limit=`
-  - `GET  /agent/analysis?limit=`
-  - `GET  /agent/signals?limit=`
-- `OfflineAgentGateway` — Socket.IO namespace `/offline`, broadcasts
-  `pipeline.event` messages.
-
-## Frontend
-
-Vite + React + TypeScript + Tailwind app under `frontend/`:
-
-- `pages/InsightsPage.tsx` — offline agent dashboard: trigger pipeline, view
-  market data, LLM analyses, strategy signals, live pipeline feed.
-- `pages/LiveTradingPage.tsx` — realtime nBBO trading: pair/side/amount form,
-  live Pyth price card, best bid/ask + spread cards, prepared plan with mock
-  submit/confirm/fail actions, lifecycle event feed, trade history.
-- `lib/api.ts` — typed Axios client for `/agent/*` and `/realtime/*`.
-- `lib/websocket.ts` — Zustand store managing both `/realtime` and `/offline`
-  Socket.IO connections and broadcasting events to all components.
-- Dev proxy: `/api` → `http://localhost:3000`, `/socket.io` → backend.
-
----
-
-## Progress Legend
-- ⏳ Pending: Not started
-- 🔄 In Progress: Currently working on
-- ✅ Completed: Done and working
+See [OP_Pending_Items.md](OP_Pending_Items.md) for decisions requiring operator
+confirmation.

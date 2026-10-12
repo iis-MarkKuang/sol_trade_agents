@@ -52,11 +52,13 @@ interface SocketStoreState {
 
 let realtimeSocket: Socket | null = null;
 let offlineSocket: Socket | null = null;
+const priceSubscriptions = new Set<string>();
+const tradeSubscriptions = new Set<string>();
 
 const MAX_TRADE_EVENTS = 50;
 const MAX_OFFLINE_EVENTS = 30;
 
-export const useSocketStore = create<SocketStoreState>((set, get) => ({
+export const useSocketStore = create<SocketStoreState>((set) => ({
   realtimeConnected: false,
   offlineConnected: false,
   tradeEvents: [],
@@ -70,7 +72,15 @@ export const useSocketStore = create<SocketStoreState>((set, get) => ({
       transports: ["websocket"],
       reconnection: true
     });
-    realtimeSocket.on("connect", () => set({ realtimeConnected: true }));
+    realtimeSocket.on("connect", () => {
+      set({ realtimeConnected: true });
+      if (priceSubscriptions.size > 0) {
+        realtimeSocket?.emit("subscribe.prices", { pairs: [...priceSubscriptions] });
+      }
+      for (const tradeId of tradeSubscriptions) {
+        realtimeSocket?.emit("subscribe.trade", { tradeId });
+      }
+    });
     realtimeSocket.on("disconnect", () => set({ realtimeConnected: false }));
     realtimeSocket.on("trade.feed", (event: TradeEvent) => {
       set((state) => ({
@@ -106,9 +116,17 @@ export const useSocketStore = create<SocketStoreState>((set, get) => ({
 }));
 
 export function subscribeToPrices(pairs: string[]): void {
-  realtimeSocket?.emit("subscribe.prices", { pairs });
+  for (const pair of pairs) {
+    priceSubscriptions.add(pair);
+  }
+  if (realtimeSocket?.connected) {
+    realtimeSocket.emit("subscribe.prices", { pairs });
+  }
 }
 
 export function subscribeToTrade(tradeId: string): void {
-  realtimeSocket?.emit("subscribe.trade", { tradeId });
+  tradeSubscriptions.add(tradeId);
+  if (realtimeSocket?.connected) {
+    realtimeSocket.emit("subscribe.trade", { tradeId });
+  }
 }

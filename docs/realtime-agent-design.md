@@ -1,99 +1,171 @@
-# Realtime Agent System Design
+# Near-Real-Time Execution Engine Design
 
-## Overview
-The Realtime Agent System is responsible for handling real-time trading with nBBO (National Best Bid/Offer) price optimization across multiple Solana DEXs.
+The online engine targets decision and execution latency measured in seconds.
+It is not intended for colocated HFT or market making.
 
-> **Note:** For a broader codebase guide, see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the system boundary and
+[CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) for file-level navigation.
 
-## Core Components
-
-### 1. Backend API & WebSocket Setup
-- Add new API endpoints for trade initiation
-- Add WebSocket server for real-time trade status notifications
-- Integrate with existing NestJS module structure
-
-### 2. Pyth Price Feeds Integration
-- Connect to Pyth Network real-time price feeds
-- Add subscription logic for multiple token pairs
-- Parse and validate incoming price updates
-
-### 3. DEX Order Book Aggregation
-- Integrate with Jupiter Aggregator SDK
-- Add Raydium SDK integration for order book
-- Add Orca SDK integration for order book
-- Implement parallel DEX querying for best performance
-
-### 4. nBBO Engine Implementation
-- Logic to aggregate BID/ASK prices from all DEX sources
-- Calculate National Best Bid (highest bid) and Best Ask (lowest ask)
-- Select optimal route based on best price and liquidity
-- Integrate with backend services
-
-### 5. Real-time Agent Core
-- Orchestration service to manage workflow
-- Trade validation and risk checks (position size, stop loss, etc.)
-- Error handling and retry logic
-
-### 6. Smart Contracts (Anchor)
-- Create Solana program for trade execution
-- Implement price verification
-- Add secure multi-sign wallet integration
-- Add Jupiter/Raydium/Orca integration from program
-- Log all trade history to on-chain state
-
-### 7. Frontend Integration
-- Add trade initiation UI
-- Connect to backend WebSocket
-- Display real-time trade status and confirmation
-- Connect to Solana Wallet Adapter for signing
-
-### 8. Database & Logging
-- Extend Prisma schema for trade history (if needed)
-- Add logging for all real-time agent actions
-- Add Prometheus metrics for latency, DEX performance, etc.
-
-## Real-time Agents Workflow (nBBO Price Execution)
-This workflow handles real-time trading with nBBO (National Best Bid/Offer) price optimization across multiple DEXs.
+## Current Prepare Flow
 
 ```mermaid
 sequenceDiagram
-    participant User as User
-    participant Frontend as Frontend UI
-    participant API as Backend API
-    participant RTAgent as Real-time Agent
-    participant Pyth as Pyth Price Feeds
-    participant DEX1 as Jupiter Aggregator
-    participant DEX2 as Raydium
-    participant DEX3 as Orca
-    participant nBBO as nBBO Engine
-    participant Contract as Solana Program
-    participant Wallet as User Wallet
+  participant Client
+  participant API as RealtimeService
+  participant Core as RealTimeAgentCore
+  participant Oracle as Pyth or mock
+  participant DEX as DEX adapters
+  participant Risk as RiskEngine
+  participant DB as PostgreSQL
 
-    User->>Frontend: Initiate trade or auto-trade triggers
-    Frontend->>API: Send trade request
-    API->>RTAgent: Start real-time execution workflow
-    RTAgent->>Pyth: Subscribe to real-time price feeds
-    Pyth-->>RTAgent: Stream price updates
-    par Query multiple DEXs
-        RTAgent->>DEX1: Get order book (BID/ASK)
-        DEX1-->>RTAgent: Return order book data
-        RTAgent->>DEX2: Get order book (BID/ASK)
-        DEX2-->>RTAgent: Return order book data
-        RTAgent->>DEX3: Get order book (BID/ASK)
-        DEX3-->>RTAgent: Return order book data
-    end
-    RTAgent->>nBBO: Aggregate BID/ASK from all sources
-    nBBO->>nBBO: Calculate best BID & best ASK
-    nBBO-->>RTAgent: Return nBBO prices + optimal route
-    RTAgent->>RTAgent: Validate trade & risk checks
-    RTAgent->>Contract: Send execute trade instruction with nBBO price
-    Contract->>Contract: Verify price & trade parameters
-    Contract->>Wallet: Request signature
-    Wallet-->>Contract: Approve & sign
-    Contract->>DEX1/DEX2/DEX3: Execute trade via best route
-    DEX1/DEX2/DEX3-->>Contract: Return trade result
-    Contract-->>RTAgent: Trade executed successfully
-    RTAgent->>DB: Log trade history
-    RTAgent->>Frontend: Notify trade completion via WebSocket
-    Frontend->>User: Display trade confirmation
+  Client->>API: POST /realtime/trade/prepare
+  API->>DB: create PENDING trade
+  API->>Core: prepareTrade(intent)
+  Core->>Oracle: latest price
+  Core->>Risk: validate intent
+  Core->>DEX: concurrent quotes
+  Core->>Core: nBBO route selection
+  Core->>Risk: validate route
+  Core-->>API: ready plan
+  API->>DB: store READY plan
+  API-->>Client: plan
 ```
+
+This produces a plan. It does not currently complete a trustworthy Solana
+execution lifecycle.
+
+## Target Modules
+
+### Market data
+
+- Maintain persistent Pyth and venue subscriptions.
+- Record source, environment, observation time, and slot/block context.
+- Detect stale, crossed, missing, and divergent markets.
+- Reconnect with heartbeat, backoff, and endpoint fallback.
+
+### Signal intake
+
+- Consume versioned, expiring strategy signals.
+- Deduplicate by signal and strategy version.
+- Translate advice into a trade intent using portfolio and sizing policy.
+- Reject research-only and simulated signals in live mode.
+
+### Quote and route
+
+- Request executable quotes for the exact amount.
+- Compare net output after venue fee, priority fee, and estimated slippage.
+- Require quote expiry and venue health.
+- Prefer one aggregator integration initially; add direct venues only after
+  their execution and accounting are tested.
+
+### Risk
+
+Current checks cover pair, amount, slippage, oracle age, liquidity, impact, and
+oracle deviation. Production also needs:
+
+- available balance and reserved funds;
+- current position and concentration;
+- open orders and duplicate intent detection;
+- realized/unrealized PnL and daily loss;
+- strategy capital allocation;
+- volatility and market-health circuit breakers;
+- operator and global kill switches.
+
+### Execution
+
+- Build and simulate the transaction.
+- Sign in an isolated wallet process or custody service.
+- Submit with an idempotency key.
+- Refresh blockhash and priority fee without changing economic constraints.
+- Never retry blindly after an ambiguous network response.
+
+### Reconciliation
+
+- Independently query RPC/indexer for signature or order status.
+- Track `SUBMITTED`, `CONFIRMED`, and `FINALIZED` separately.
+- Reconcile fills, fees, balances, and positions.
+- Resume unresolved trades after process restart.
+- Alert on `UNKNOWN` or accounting mismatch.
+
+## Required State Machine
+
+```text
+PROPOSED
+  -> VALIDATED
+  -> QUOTED
+  -> APPROVED
+  -> SIGNING
+  -> SUBMITTED
+  -> CONFIRMED
+  -> FINALIZED
+
+Terminal/error states:
+REJECTED, EXPIRED, FAILED, UNKNOWN
+```
+
+Only server-side commands and chain observations may transition state. The
+current `POST /realtime/trade/confirm` endpoint is demo-only and must be removed
+or restricted to a simulated executor.
+
+## Live vs Simulated Mode
+
+Mode must be explicit on every object, not inferred from environment:
+
+```text
+MarketObservation.environment
+DexQuote.environment
+TradeSignal.environment
+ExecutionPlan.environment
+Trade.environment
+```
+
+Rules:
+
+- A live plan may contain only live observations and quotes.
+- Oracle or venue failure in live mode fails closed.
+- A mock transaction hash can never produce `CONFIRMED`.
+- The UI must visibly distinguish simulated and live modes.
+
+## Solana First
+
+The shortest path to a reliable engine is:
+
+1. One pair, such as `SOL/USDC`.
+2. Pyth plus Jupiter executable quotes.
+3. Paper executor and full reconciliation model.
+4. Devnet/testnet signing and confirmation.
+5. Small capped mainnet notional.
+6. Additional direct DEX adapters.
+7. Injective and cross-chain inventory.
+
+Cross-chain arbitrage is not one atomic route. It requires pre-funded
+inventory, two-leg execution, bridge/rebalancing logic, and additional risk
+controls.
+
+## Contract Role
+
+The Anchor program may become an optional on-chain policy/audit guard. Today it
+is disconnected from the backend and validates a reported result rather than
+performing DEX CPI. Integrate it only after:
+
+- account constraints and state sizing are tested;
+- `limit_price` is enforced or removed;
+- replay/idempotency behavior is defined;
+- Anchor unit/integration tests pass;
+- its value over backend risk plus wallet policy is demonstrated.
+
+## Observability
+
+Measure at least:
+
+- feed age and reconnect count;
+- quote success, latency, and rejection reason by venue;
+- decision duration;
+- simulation and submission latency;
+- confirmation/finalization latency;
+- slippage against quoted and oracle price;
+- failed, expired, and unknown trades;
+- position and PnL reconciliation mismatch.
+
+Logs must include `tradeId`, `signalId`, strategy/config version, quote ID, and
+chain signature without exposing credentials.

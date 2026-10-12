@@ -1,86 +1,227 @@
-# Code Walkthrough: Solana Frontier Web3 LLM Trading Agent
+# Code Walkthrough
 
-## 1. 概述 (Overview)
+This is the canonical file-level guide to the repository. Read
+[ARCHITECTURE.md](ARCHITECTURE.md) first for the product boundary and roadmap.
 
-本项目是一个全栈的 Web3 LLM 交易 Agent 平台，支持 Solana 与 Injective 跨链套利，核心包括两个主要子系统：
-- **Offline Agent (离线分析代理)**：负责每日/定期的数据抓取、LLM分析和策略信号生成。
-- **Realtime Agent (实时交易代理)**：负责监听预言机（Pyth）、进行跨 DEX (Jupiter, Raydium, Orca, Helix) 的 nBBO 聚合比价，并执行链上交易（含跨链套利）。
+## Start Here
 
-本项目采用前后端分离架构，配合 Supabase 数据库和可选的智能合约层。
+The application is a NestJS backend plus a React operator UI.
 
-## 2. 目录结构导览 (Directory Structure)
+- Backend entry: `backend/src/main.ts`
+- Backend composition: `backend/src/app.module.ts`
+- Frontend entry: `frontend/src/main.tsx`
+- Frontend routes: `frontend/src/App.tsx`
+- Database schema: `backend/prisma/schema.prisma`
+
+There is one supported backend runtime. Historical standalone server code has
+been removed.
+
+## Repository Map
 
 ```text
-sol_trade_agent/
-├── backend/            # 后端核心逻辑 (NestJS)
-├── frontend/           # 前端用户界面 (React + Vite)
-├── contracts/          # 智能合约 (Solana Anchor)
-├── supabase/           # 数据库配置与迁移文件
-└── docs/               # 文档库
+backend/
+  prisma/                 PostgreSQL schema
+  src/
+    agent/                realtime core and Injective identity
+    agents/               LLM research summaries
+    config/               environment parsing and token registry
+    crawlers/             offline data-source adapters
+    data/                 cleaning and normalization
+    dex/                  quote adapters and aggregator
+    nbbo/                 best bid/ask and route selection
+    oracle/               Pyth feed parsing/subscription
+    realtime/             REST, WebSocket, orchestration, persistence
+    risk/                 deterministic pre-trade checks
+    scheduler/            offline pipeline and BullMQ schedule
+    strategy/             deterministic signal logic
+    transactions/         chain-specific transaction helpers
+    utils/                amount and retry utilities
+contracts/
+  programs/trade_execution/  Anchor guardrail prototype
+frontend/
+  src/pages/              Insights and Live Trading screens
+  src/lib/                typed REST and Socket.IO clients
+supabase/
+  migrations/             manual SQL migration path
+docs/                     architecture, operations, and design notes
 ```
 
-### 2.1 后端服务 (`backend/`)
-后端采用 **NestJS** 框架构建，按模块化划分。入口文件为 `backend/src/main.ts`。
-主要目录及模块：
+## Runtime Composition
 
-- **`src/agents/` (LLM 代理引擎)**:
-  - 包含 `llm-factory.ts`：支持 OpenAI 与 Azure OpenAI 的大语言模型工厂，用于生成市场洞察和策略建议。
-- **`src/crawlers/` (数据抓取与爬虫)**:
-  - 抓取 CoinMarketCap, Dune, TradingView 等数据，通过 BullMQ 调度 (`scheduler/`)。
-- **`src/data/` (数据处理层)**:
-  - 对抓取的数据进行清洗 (DataCleaner) 和标准化 (DataNormalizer)。
-- **`src/dex/` & `src/oracle/` (DEX 与预言机接入)**:
-  - `jupiter-adapter.ts`, `raydium-adapter.ts`, `injective-helix-adapter.ts`：跨链 DEX 适配器。
-  - `injective-pyth-adapter.ts`：Pyth 预言机喂价服务接入。
-- **`src/nbbo/` (最优比价引擎)**:
-  - `engine.ts`：聚合各 DEX 深度，计算 nBBO（National Best Bid/Offer）最优报价。
-- **`src/realtime/` (实时代理核心)**:
-  - `realtime-agent-core.ts`：处理实时交易准备与风险控制（Risk Engine）。
-  - 包含 `agent-mcp-server.service.ts`：暴露 Injective MCP Server 供其他 Agent 调用。
-  - `cross-chain-agent.service.ts`：基于 LangChain 提供的跨链套利分析助手。
-- **`src/agent/` (Agent 身份认证)**:
-  - `injective-agent-identity.service.ts`：处理 ERC-8004 代理身份认证和注册，与 Injective 身份系统交互。
-- **`src/strategy/` (交易策略层)**:
-  - 实现具体的量化策略（如 `simple-momentum.strategy.ts`, `cross-chain-arb.strategy.ts`）。
-- **`src/prisma/`**:
-  - `schema.prisma`：定义 Postgres 数据库模型，并提供 Prisma 客户端服务。
+`AppModule` wires these main modules:
 
-### 2.2 前端界面 (`frontend/`)
-基于 **React 18 + Vite + TailwindCSS**。入口文件为 `frontend/src/main.tsx`。
-- **`src/pages/InsightsPage.tsx`**：离线 Agent 面板，展示数据爬取结果、LLM分析和策略信号。
-- **`src/pages/LiveTradingPage.tsx`**：实时交易面板，连接 WebSocket 显示实时价格，允许用户配置交易并展示 nBBO 计算过程和跨链执行流。
-- **`src/lib/`**：包含 API 请求与 WebSocket 通信工具。
+- `SchedulerModule`: offline research pipeline.
+- `RealtimeModule`: online quote/risk/plan API.
+- `AgentIdentityModule`: optional Injective registry read path.
+- `CrawlersModule`, `DataModule`, `AgentsModule`, `StrategyModule`: pipeline
+  dependencies.
+- `PrismaModule`: shared durable persistence.
 
-### 2.3 数据库 (`supabase/`)
-基于 **Supabase** 提供的 PostgreSQL：
-- **`migrations/`**：存放数据库初始建表 SQL（如 `00000000000000_init.sql`）。
-- 后端主要通过 Prisma 的 `db:push` 直接映射表结构，migration 为手动备用。
+`AppController` now only owns `/` and `/health`. Domain APIs belong to their
+domain controllers.
 
-## 3. 核心执行流分析 (Core Workflows)
+## Offline Walkthrough
 
-### 3.1 离线数据分析管线 (Offline Pipeline)
-1. **触发**: 由 `SchedulerService` 定时触发或在前端 Insights 页面手动点击 "Run pipeline now" 触发 (`POST /agent/run-pipeline`)。
-2. **抓取**: 爬虫并发抓取 (CMC, TV, Dune)。
-3. **清洗**: `DataCleanerService` 与 `DataNormalizerService` 整理数据。
-4. **分析**: 调用 `LlmAgentService` 进行市场分析，并调用 `StrategyEngineService` 生成买卖信号 (Trade Signals)。
+### Entry points
 
-### 3.2 实时跨链交易执行 (Realtime & Cross-chain)
-1. **询价准备**: 前端发起交易意图 (`POST /realtime/trade/prepare`)。
-2. **nBBO 聚合**: `NbboEngine` 获取 Pyth 价格，并发查询 Solana DEX 适配器与 Injective Helix 适配器。
-3. **风控与打包**: 通过 `RiskEngine` 验证滑点和仓位后，若路由在 Solana 则生成 `JupiterTransactionBuilder` (未签名 tx)，若在 Injective 则生成 `InjectiveExecutionPlan`。
-4. **执行 (Injective)**: 若为跨链路由，系统将调用官方 Injective MCP Server (`InjectiveMcpClient`) 完成最终的签名和链上广播。
+- `POST /agent/run-pipeline`: synchronous manual run.
+- `POST /agent/schedule-pipeline`: enqueue when BullMQ is enabled.
+- `SchedulerService`: creates the optional Redis queue and repeat job.
 
-## 4. 关联文档阅读顺序 (Linked Documentation)
+### Execution
 
-为了更好地理解项目设计，建议按以下顺序阅读：
+`OfflineAgentService.runPipeline()`:
 
-1. **[README.md](../README.md)**: 项目快速启动指南及整体架构介绍。
-2. **[AI 智能体行为规范 (AGENTS.md)](AGENTS.md)**: 规范 AI Agent 在本仓库中的开发准则。
-3. **[架构总览 (ARCHITECTURE.md)](ARCHITECTURE.md)**: 高层系统架构图和组件流转图。
-4. **[离线 Agent 设计 (offline-agent-design.md)](offline-agent-design.md)**: 离线抓取、数据清洗及大模型分析工作流详解。
-5. **[实时 Agent 设计 (realtime-agent-design.md)](realtime-agent-design.md)**: nBBO 比价引擎、实时执行流及跨链套利扩展细节。
-5. **[操作手册 (MANUAL.md)](MANUAL.md)**: 部署、环境配置与测试用例指南。
-6. **[项目进度 (progress-tracker.md)](progress-tracker.md)**: 任务 Packet 切分与 OP 阻塞点管理追踪。
+1. Runs CoinMarketCap/CoinGecko, TradingView, and Dune adapters concurrently.
+2. Each crawler persists its own source rows.
+3. `DataCleanerService` removes exact-key duplicates and invalid negative
+   values.
+4. `DataNormalizerService` currently returns the rows unchanged.
+5. `LlmAgentService` creates a short market summary or a generic fallback.
+6. `StrategyEngineService` runs `SimpleMomentumStrategy`.
+7. Analysis and signals are persisted and a `/offline` Socket.IO event is sent.
 
----
-*本文档为代码级导览，请结合上述关联文档进行具体模块的深入开发。*
+### Important reality checks
+
+- TradingView and Dune return hard-coded data.
+- CoinMarketCap may silently fall through CoinGecko to hard-coded data.
+- The LLM sees only five rows and is not the strategy engine.
+- RSI signals only occur on rows that already contain RSI and price.
+- There is no point-in-time join, feature store, backtest gate, portfolio state,
+  or signal expiry.
+
+These signals are advice/research artifacts, not executable orders.
+
+## Online Walkthrough
+
+### Startup
+
+`RealtimeService.onModuleInit()`:
+
+1. Builds a risk policy from environment settings.
+2. Probes Pyth and may replace it with a deterministic mock feed.
+3. Builds live Solana adapters only when `ENABLE_REAL_DEX=true`; otherwise it
+   uses an oracle-tracking mock DEX.
+4. Optionally adds Injective Helix and an MCP or mock executor.
+5. Creates `RealTimeAgentCore` and starts Pyth price broadcasting.
+
+### Prepare path
+
+`POST /realtime/trade/prepare`:
+
+1. `PrepareTradeDtoSchema` parses the request.
+2. `RealtimeService` converts UI amounts to native integer units.
+3. A `RealtimeTrade(PENDING)` row is created.
+4. `RealTimeAgentCore.prepareTrade()` reads an oracle price.
+5. `RiskEngine.validateIntent()` checks pair, slippage, amount, freshness, and
+   maximum notional.
+6. `DexOrderBookAggregator` queries adapters concurrently with timeouts.
+7. `NbboEngine` selects the highest bid or lowest ask.
+8. `RiskEngine.validateRoute()` checks venue, liquidity, impact, age, and
+   oracle deviation.
+9. A ready plan is persisted. Jupiter may include an unsigned transaction;
+   Injective may include an execution plan.
+
+### Execution path
+
+- Solana: transaction building exists, but wallet signing, submission, and
+  confirmation are not wired into the service.
+- Injective: `executeInjectiveTrade()` can call a child MCP server when a
+  mnemonic is configured; otherwise it produces a simulated hash.
+- `POST /realtime/trade/confirm` accepts a client-supplied lifecycle status.
+  This supports the demo UI and is not valid production reconciliation.
+
+### Cross-chain path
+
+`CrossChainArbStrategy` compares Solana and Injective midpoint snapshots and
+subtracts a fixed bridge cost. In demo mode an intentional Injective mock
+premium creates visible spreads. It does not model:
+
+- simultaneous inventory on both chains;
+- transfer and finality time;
+- funding, borrow, withdrawal, or bridge limits;
+- fill probability and depth across the requested size;
+- legging and rebalancing risk.
+
+Treat this as a research scanner.
+
+## Data Model
+
+- `MarketData`: source observations and optional indicators.
+- `AnalysisResult`: LLM-generated text.
+- `TradeSignal`: offline strategy advice.
+- `RealtimeTrade`: current demo lifecycle and serialized plan.
+- `RealtimeAgentLog`: structured lifecycle events.
+- `BacktestResult` and `CrawlerJob`: defined but not used by the current
+  runtime.
+
+Prisma `db:push` is the current demo schema path. SQL migrations are a parallel
+manual path and can drift; production should choose migrations as the sole
+deployment mechanism.
+
+## Contract Walkthrough
+
+`contracts/programs/trade_execution/src/lib.rs` provides:
+
+- multisig initialization and policy updates;
+- trade record creation and approvals;
+- output, route hash, DEX program, and oracle-deviation checks;
+- cancellation and event records.
+
+It is not currently called by the backend. `execute_trade` validates a supplied
+execution report but does not perform the DEX CPI itself. `limit_price` is
+accepted in `TradeParams` but not stored or checked. There are no Anchor tests,
+so the program must remain a prototype.
+
+## Frontend Walkthrough
+
+- `InsightsPage.tsx`: runs the offline pipeline and displays rows, analysis,
+  signals, and the cross-chain scanner.
+- `LiveTradingPage.tsx`: requests snapshots and plans, displays trade records,
+  and exposes simulated lifecycle buttons.
+- `lib/api.ts`: REST types and calls.
+- `lib/websocket.ts`: one Zustand store for `/realtime` and `/offline`.
+
+The frontend is an operator/demo console. It is not a wallet or execution
+authority.
+
+## Known Cleanup and Risk Register
+
+### Must fix before paper trading
+
+- Add explicit `live | simulated | fallback` provenance to all market data,
+  quotes, signals, and executions.
+- Prevent fallback data from entering a live execution policy.
+- Guard trade-state transitions and add idempotency keys.
+- Replace or remove hard-coded TradingView and Dune sources.
+- Implement real normalization, feature timestamps, and signal expiry.
+
+### Must fix before testnet funds
+
+- Remove client-authoritative confirmation.
+- Add signing isolation, submitter, independent reconciler, and RPC fallback.
+- Validate balances, positions, daily loss, exposure, and open-order limits.
+- Add integration tests against real quote payload fixtures.
+- Add Anchor tests and connect or remove the contract layer.
+
+### Simplification candidates
+
+- Remove unused dependencies and architecture claims for Temporal, Winston,
+  Anthropic, wallet adapters, and chart libraries unless a current packet uses
+  them.
+- Consolidate the two database schema paths around Prisma migrations.
+- Keep Agent Identity and cross-chain MCP outside the critical execution path
+  until the single-chain engine is reliable.
+
+## Suggested Reading Order
+
+1. [ARCHITECTURE.md](ARCHITECTURE.md)
+2. `backend/src/app.module.ts`
+3. `backend/src/scheduler/offline-agent.service.ts`
+4. `backend/src/realtime/realtime.service.ts`
+5. `backend/src/agent/realtime-agent-core.ts`
+6. `backend/src/risk/risk-engine.ts`
+7. `backend/prisma/schema.prisma`
+8. [offline-agent-design.md](offline-agent-design.md)
+9. [realtime-agent-design.md](realtime-agent-design.md)
+10. [OP_Pending_Items.md](OP_Pending_Items.md)

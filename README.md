@@ -1,6 +1,17 @@
 # Solana Frontier Web3 LLM Trading Agent
 
-A Web3 LLM agent platform for autonomous Solana trading, similar to b.ai, combining AI-driven market insights, real-time nBBO execution, and **Injective cross-chain arbitrage** (Nova Program).
+A research and execution prototype for a near-real-time quantitative trading
+engine. It combines an offline market-analysis pipeline with live/mock market
+quotes, deterministic pre-trade risk checks, and experimental Solana/Injective
+execution adapters.
+
+> **Current boundary:** the project can prepare and persist trade plans, but it
+> is not yet a production autonomous trading engine. Solana signing and
+> confirmation are not wired, several data sources use mock fallbacks, and
+> cross-chain arbitrage is a research demo. Read
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the target architecture and
+> [`docs/CODE_WALKTHROUGH.md`](docs/CODE_WALKTHROUGH.md) for the verified code
+> path.
 
 > **Need to run or deploy this?** See [`docs/MANUAL.md`](docs/MANUAL.md) — local startup + Azure demo website deployment.
 
@@ -14,6 +25,7 @@ sol_trade_agent/
 │   ├── CODE_WALKTHROUGH.md    # Codebase walkthrough and directory guide
 │   ├── offline-agent-design.md  # Detailed offline agent design
 │   ├── realtime-agent-design.md # Detailed realtime agent design
+│   ├── OP_Pending_Items.md     # Product/operator decisions
 │   └── progress-tracker.md    # Project progress tracking
 ├── backend/                   # NestJS backend
 │   ├── src/
@@ -58,10 +70,9 @@ DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 REDIS_URL="redis://localhost:6379"
 
 # APIs
-CMC_API_KEY="your_coinmarketcap_api_key"
+COINMARKETCAP_API_KEY="your_coinmarketcap_api_key"
 DUNE_API_KEY="your_dune_api_key"
 OPENAI_API_KEY="your_openai_api_key"
-ANTHROPIC_API_KEY="your_anthropic_api_key"
 
 # LLM Config
 LLM_PROVIDER="openai"
@@ -278,6 +289,7 @@ npm run test:all          # Run both Jest and Vitest
 - [High-level System Architecture](/docs/ARCHITECTURE.md)
 - [Offline Agent Detailed Design](/docs/offline-agent-design.md)
 - [Realtime Agent Detailed Design](/docs/realtime-agent-design.md)
+- [Operator Pending Decisions](/docs/OP_Pending_Items.md)
 - [Project Progress Tracker](/docs/progress-tracker.md)
 
 ---
@@ -287,14 +299,13 @@ npm run test:all          # Run both Jest and Vitest
 | Component | Technologies |
 |-----------|--------------|
 | **Backend Framework** | NestJS 10 + TypeScript |
-| **Database** | Supabase (PostgreSQL) with optional TimescaleDB |
+| **Database** | Supabase/PostgreSQL |
 | **ORM** | Prisma |
-| **LLM Integration** | LangChain (OpenAI, Anthropic, local models) |
+| **LLM Integration** | LangChain with OpenAI-compatible or Azure OpenAI endpoints |
 | **Job Queues** | BullMQ + Redis (local or Upstash) |
-| **Workflow Orchestration** | Temporal (optional, production-grade) |
 | **Real-time** | Socket.IO |
 | **Frontend** | Vite + React 18 + TypeScript + Tailwind CSS + Zustand + Socket.IO client |
-| **Smart Contracts** | Anchor Framework + Jupiter (Solana) |
+| **Smart Contracts** | Anchor guardrail prototype |
 
 ---
 
@@ -387,7 +398,9 @@ The NL quant assistant and offline LLM agent share a single factory (`backend/sr
 | `OPENAI_BASE_URL` | OpenAI | Optional custom base URL (e.g. proxy) |
 | `LLM_MODEL` | OpenAI | Model name, default `gpt-4o-mini` |
 
-When neither Azure nor OpenAI credentials are present, both services fall back to deterministic/mock output so the demo still runs end-to-end.
+When neither Azure nor OpenAI credentials are present, both services fall back
+to deterministic/mock output so the demo still runs end-to-end. Mock output is
+not suitable for live trading.
 
 ### Run the Injective-enabled demo
 
