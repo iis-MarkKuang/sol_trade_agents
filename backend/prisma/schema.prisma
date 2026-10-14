@@ -146,3 +146,26 @@ model RealtimeAgentLog {
   @@index([tradeId, createdAt])
   @@index([level, createdAt])
 }
+
+// Provider-neutral usage ledger. PG is the source of truth; Redis only caches
+// daily aggregates for the hot-path budget check. See
+// docs/usage-ledger-design.md and docs/usage-ledger-roadmap.md.
+model UsageEvent {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()"))
+  provider      String
+  eventDate     DateTime @db.Date
+  model         String?
+  queryKey      String?
+  status        String
+  units         Int
+  unitKind      String
+  reservationId String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@map("usage_event")
+  @@index([provider, eventDate])
+  @@index([provider, eventDate, model])
+  @@index([provider, eventDate, queryKey])
+  @@index([reservationId])
+}

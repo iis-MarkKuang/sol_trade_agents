@@ -5,6 +5,14 @@ export interface CrawledMarketData {
   source: string;
   price?: number;
   volume24h?: number;
+  buyVolumeUsd24h?: number;
+  sellVolumeUsd24h?: number;
+  netFlowUsd24h?: number;
+  tokenBoughtAmount24h?: number;
+  tokenSoldAmount24h?: number;
+  tradeCount24h?: number;
+  chain?: string;
+  platform?: string;
   marketCap?: number;
   rsi?: number;
   rsi14?: number;

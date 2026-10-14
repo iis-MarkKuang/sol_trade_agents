@@ -1,105 +1,82 @@
-import { ChatOpenAI } from "@langchain/openai";
-import { ConfigService } from "../config/config.service.js";
+import type { ChatOpenAI } from '@langchain/openai';
+import type { ConfigService } from '../config/config.service.js';
+import { AzureOpenAiAdapter } from './adapters/azure-openai.adapter.js';
+import { DeepSeekAdapter } from './adapters/deepseek.adapter.js';
+import type {
+  LlmModelOptions,
+  LlmProviderAdapter,
+  LlmProviderName,
+} from './adapters/llm-provider.adapter.js';
+import { OpenAiAdapter } from './adapters/openai.adapter.js';
 
-export interface LlmFactoryOptions {
-  temperature?: number;
-  modelName?: string;
-}
+export type LlmFactoryOptions = LlmModelOptions;
 
-/**
- * OpenRouter models that support tool/function calling and are reachable from
- * mainland China (no OpenAI upstream ToS 403). Verified via OpenRouter + tools.
- */
 export const OPENROUTER_CN_TOOL_MODELS = [
-  "deepseek/deepseek-chat-v3-0324",
-  "deepseek/deepseek-chat",
+  'deepseek/deepseek-chat-v3-0324',
+  'deepseek/deepseek-chat',
 ] as const;
 
-/** OpenRouter routes `openai/*` and `anthropic/*` through providers that 403 CN IPs. */
-const OPENROUTER_BLOCKED_PREFIXES = ["openai/", "anthropic/"] as const;
+const OPENROUTER_BLOCKED_PREFIXES = ['openai/', 'anthropic/'] as const;
+
+const providerAdapters: Record<LlmProviderName, LlmProviderAdapter> = {
+  openai: new OpenAiAdapter(),
+  deepseek: new DeepSeekAdapter(),
+  azure: new AzureOpenAiAdapter(),
+};
+
+export function getLlmProviderAdapter(provider: LlmProviderName): LlmProviderAdapter {
+  return providerAdapters[provider];
+}
+
+export function isLlmConfigured(configService: ConfigService): boolean {
+  const config = configService.llm;
+  return getLlmProviderAdapter(config.provider).isConfigured(config);
+}
 
 function isOpenRouterGateway(baseUrl?: string): boolean {
-  return Boolean(baseUrl?.includes("openrouter"));
+  return Boolean(baseUrl?.includes('openrouter'));
 }
 
 function isBlockedOnOpenRouter(model: string, baseUrl?: string): boolean {
   if (!isOpenRouterGateway(baseUrl)) return false;
   const lower = model.toLowerCase();
-  return OPENROUTER_BLOCKED_PREFIXES.some((p) => lower.startsWith(p));
+  return OPENROUTER_BLOCKED_PREFIXES.some((prefix) => lower.startsWith(prefix));
 }
 
 /**
- * Model try-order for tool-calling flows (Ask Agent). Skips blocked OpenRouter
- * models so we don't waste 6–30s on a doomed OpenAI request before fallback.
+ * Resolves model fallback order without leaking provider rules into callers.
+ * Direct OpenAI and DeepSeek APIs use their configured model. OpenRouter keeps
+ * the existing China-reachable DeepSeek fallback list.
  */
 export function resolveToolModelCandidates(
   configService: ConfigService,
   preferred?: string,
 ): string[] {
-  const cfg = configService.llm;
-  const primary = preferred ?? cfg.model;
-  const pool = [
-    ...(primary && !isBlockedOnOpenRouter(primary, cfg.openAIBaseUrl) ? [primary] : []),
-    ...OPENROUTER_CN_TOOL_MODELS,
-  ];
-  const seen = new Set<string>();
-  return pool.filter((m) => {
-    if (seen.has(m)) return false;
-    seen.add(m);
-    return true;
-  });
+  const config = configService.llm;
+  const primary = preferred ?? config.model;
+  const candidates =
+    config.provider === 'openai' && isOpenRouterGateway(config.openAIBaseUrl)
+      ? [
+          ...(primary && !isBlockedOnOpenRouter(primary, config.openAIBaseUrl) ? [primary] : []),
+          ...OPENROUTER_CN_TOOL_MODELS,
+        ]
+      : [primary];
+
+  return candidates.filter((model, index) => Boolean(model) && candidates.indexOf(model) === index);
 }
 
 /**
- * Builds a LangChain ChatOpenAI instance from the active LLM provider config.
- *
- * Supports two backends so the project can use the Nova Program's Microsoft
- * Azure OpenAI credits without code changes:
- *
- *  - `azure`  -> Azure OpenAI Service (AZURE_OPENAI_* env vars). The deployment
- *                name maps to a specific model deployed in your Azure resource.
- *  - `openai` -> public OpenAI API or OpenRouter-compatible gateway (OPENAI_API_KEY).
- *
- * The provider is auto-detected: Azure wins when `AZURE_OPENAI_API_KEY` is set,
- * unless `LLM_PROVIDER` explicitly says otherwise.
- *
- * Returns `undefined` when no credentials are configured so callers can fall
- * back to deterministic/mock behaviour.
+ * Creates the selected provider model. Undefined means that the selected
+ * adapter lacks credentials, allowing callers to use deterministic fallback.
  */
 export function buildChatModel(
   configService: ConfigService,
   options: LlmFactoryOptions = {},
 ): ChatOpenAI | undefined {
-  const cfg = configService.llm;
-  const modelName = options.modelName ?? cfg.model;
-
-  if (cfg.provider === "azure") {
-    if (!cfg.azureOpenAIApiKey || !cfg.azureOpenAIApiInstanceName || !cfg.azureOpenAIApiDeploymentName) {
-      return undefined;
-    }
-    return new ChatOpenAI({
-      temperature: options.temperature ?? cfg.temperature,
-      azureOpenAIApiKey: cfg.azureOpenAIApiKey,
-      azureOpenAIApiInstanceName: cfg.azureOpenAIApiInstanceName,
-      azureOpenAIApiDeploymentName: cfg.azureOpenAIApiDeploymentName,
-      azureOpenAIApiVersion: cfg.azureOpenAIApiVersion,
-      azureOpenAIBasePath: cfg.azureOpenAIBasePath,
-      modelName: options.modelName ?? cfg.azureOpenAIApiDeploymentName,
-      maxRetries: 0,
-      timeout: 30_000,
-    });
-  }
-
-  if (!cfg.openAIApiKey) {
+  const config = configService.llm;
+  const adapter = getLlmProviderAdapter(config.provider);
+  if (!adapter.isConfigured(config)) {
     return undefined;
   }
-
-  return new ChatOpenAI({
-    openAIApiKey: cfg.openAIApiKey,
-    temperature: options.temperature ?? cfg.temperature,
-    modelName,
-    configuration: cfg.openAIBaseUrl ? { baseURL: cfg.openAIBaseUrl } : undefined,
-    maxRetries: 0,
-    timeout: 30_000,
-  });
+  return adapter.createModel(config, options);
 }

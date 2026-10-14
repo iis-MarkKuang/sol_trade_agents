@@ -52,14 +52,26 @@ Full setup (recommended for the real submission):
 
 ```env
 # --- LLM (pick one) ---
-# Azure OpenAI — use the Nova Program's Microsoft Azure credits
-LLM_PROVIDER="azure"
-AZURE_OPENAI_API_KEY="<azure key>"
-AZURE_OPENAI_API_INSTANCE_NAME="<your-resource>"
-AZURE_OPENAI_API_DEPLOYMENT_NAME="gpt-4o-mini"
-AZURE_OPENAI_API_VERSION="2024-08-01-preview"
+# DeepSeek:
+LLM_PROVIDER="deepseek"
+DEEPSEEK_API_KEY="<deepseek key>"
+DEEPSEEK_MODEL="deepseek-chat"
 # OR public OpenAI:
+# LLM_PROVIDER="openai"
 # OPENAI_API_KEY="sk-..."
+# OPENAI_MODEL="gpt-4o-mini"
+# OR Azure OpenAI — use the Nova Program's Microsoft Azure credits:
+# LLM_PROVIDER="azure"
+# AZURE_OPENAI_API_KEY="<azure key>"
+# AZURE_OPENAI_API_INSTANCE_NAME="<your-resource>"
+# AZURE_OPENAI_API_DEPLOYMENT_NAME="gpt-4o-mini"
+# AZURE_OPENAI_API_VERSION="2024-08-01-preview"
+
+# --- Typed decision quality gate (optional; begin in shadow mode) ---
+DECISION_PROVIDER="jev"
+TYPESAFE_API_KEY="<TypeSafe key>"
+JEV_MODEL="jev-1.13.0"
+JEV_QUALITY_GATE_MODE="shadow"
 
 # --- Data crawlers (optional) ---
 CMC_API_KEY="<coinmarketcap>"
@@ -75,10 +87,15 @@ INJECTIVE_MNEMONIC="<testnet mnemonic>"
 | `REDIS_URL` | ⚠️ if using BullMQ queues | Local Supabase / Upstash / Azure Cache |
 | `ENABLE_INJECTIVE` | optional | `true` → register Helix adapter + Injective executor |
 | `INJECTIVE_MNEMONIC` | optional | Empty → simulated tx hashes; set → real testnet orders via MCP |
-| `LLM_PROVIDER` | optional | Auto: Azure if `AZURE_OPENAI_API_KEY` set, else OpenAI |
+| `LLM_PROVIDER` | optional | `deepseek`, `openai`, or `azure`; credentials are auto-detected if omitted |
+| `DEEPSEEK_API_KEY` | optional | Direct DeepSeek API key |
+| `OPENAI_API_KEY` | optional | Direct OpenAI or compatible-gateway key |
 | `AZURE_OPENAI_*` | optional | Azure OpenAI Service credentials |
-| `OPENAI_API_KEY` | optional | Public OpenAI key |
-| `CMC_API_KEY` / `DUNE_API_KEY` | optional | Enrich crawlers; mocks used if absent |
+| `DECISION_PROVIDER` | optional | `none` or `jev`; separate from the generative LLM provider |
+| `TYPESAFE_API_KEY` | JEV only | TypeSafe API credential |
+| `JEV_QUALITY_GATE_MODE` | optional | `disabled`, `shadow`, or `enforce`; begin with `shadow` |
+| `COINMARKETCAP_API_KEY` | optional | Enables CoinMarketCap before the CoinGecko/static fallback |
+| `DUNE_API_KEY` | required for live Dune | Queries real 24h DEX token volumes; no implicit mock fallback |
 
 ### 2.2 Frontend (`frontend/.env`)
 
@@ -339,7 +356,7 @@ Then open the Static Web Apps URL in a browser and run the same demo flow from �
 | `prisma generate` / `db:push` fails locally | Ensure `npx supabase start` finished; `DATABASE_URL` matches the printed local URL |
 | Frontend WS indicators stay red | Backend not up, or `VITE_BACKEND_URL` wrong; check browser console — `/socket.io` must 200 |
 | No Injective quotes | `ENABLE_INJECTIVE=true`? The Helix adapter hits `https://api.injective.exchange`; outbound HTTPS must be allowed |
-| LLM returns "mock" text | No Azure/OpenAI key configured — expected; set one for real insights |
+| LLM returns "mock" text | The selected DeepSeek/OpenAI/Azure adapter has no key; configure its provider-specific credential |
 | `TS2589` / type errors in `cross-chain-agent.service.ts` | Known LangChain+zod inference issue, suppressed with `@ts-ignore`; runtime unaffected |
 | App Service container can't pull from ACR | Enable managed identity + `az webapp config set ... --generic-configurations '{"acrUseManagedIdentityCreds":true}'` |
 | Azure OpenAI 404 deployment not found | `AZURE_OPENAI_API_DEPLOYMENT_NAME` must match the **deployment name** (not model name) you created in Azure |

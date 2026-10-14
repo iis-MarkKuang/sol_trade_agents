@@ -105,7 +105,7 @@ export function InsightsPage() {
         <div>
           <h2 className="text-lg font-semibold">Offline Agent Pipeline</h2>
           <p className="text-sm text-slate-400">
-            Triggers crawl → clean → normalize → LLM analysis → strategy signals.
+            Triggers crawl → clean → normalize → LLM analysis → strategy signals → decision quality gate.
             Set <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">ENABLE_SCHEDULER=true</code>{" "}
             on the backend to enable scheduled execution.
           </p>
@@ -124,13 +124,14 @@ export function InsightsPage() {
       {lastRun && (
         <section className="card">
           <h3 className="text-sm font-semibold text-slate-200">Last Run Summary</h3>
-          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-7">
             <Stat label="Duration" value={`${lastRun.durationMs} ms`} />
             <Stat label="CMC" value={lastRun.crawled.coinmarketcap.toString()} />
             <Stat label="TradingView" value={lastRun.crawled.tradingview.toString()} />
             <Stat label="Dune" value={lastRun.crawled.dune.toString()} />
             <Stat label="Cleaned" value={lastRun.cleaned.toString()} />
-            <Stat label="Signals" value={lastRun.signalsGenerated.toString()} />
+            <Stat label="Signals" value={`${lastRun.signalsPersisted}/${lastRun.signalsGenerated}`} />
+            <Stat label="Quality gate" value={`${lastRun.qualityGate.status} (${lastRun.qualityGate.mode})`} />
           </div>
           <p className="mt-4 rounded-xl border border-slate-800 bg-slate-900/70 p-3 text-sm leading-relaxed text-slate-200">
             {lastRun.analysisPreview}

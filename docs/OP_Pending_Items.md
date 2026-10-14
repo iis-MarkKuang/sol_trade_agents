@@ -15,6 +15,11 @@ work can continue in paper mode while they are unresolved.
 | OP-08 | Data-source policy | No silent mocks outside local/demo mode | Prevents synthetic data from appearing live | Pending |
 | OP-09 | Contract role | Keep Anchor program optional until tested and integrated | Avoids treating an audit prototype as execution security | Pending |
 | OP-10 | Public API access | Private operator API with authentication and network restriction | Current write endpoints are unauthenticated | Pending |
+| OP-11 | UsageLedger over-limit policy | Fail closed for paid calls when hard limit hit; cache-only may continue | Decides whether pipeline stalls or degrades when budget exhausted | Pending |
+| OP-12 | Redis unavailable fallback | Degrade to PostgreSQL-only counting (slower, non-atomic) | Prevents total outage when Redis is down; trades safety for availability | Pending |
+| OP-13 | CMC metering unit | Count API credits (CMC plan meter), not raw requests | CMC bills by credit; request count misrepresents cost | Pending |
+| OP-14 | UsageLedger warning/hard-limit defaults | Dune 8/day hard, CMC 1000 credits/day hard, LLM 50k tokens/day hard, warning at 80% | Concrete per-provider caps before persistence goes live | Pending |
+| OP-15 | UsageLedger budget ownership | Fold into OP-05 risk budget as a single operator-approved cap set | Keeps cost limits and capital limits under one approval gate | Pending |
 
 ## Acceptance Gate for Limited Live Trading
 

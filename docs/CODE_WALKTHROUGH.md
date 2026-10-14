@@ -27,6 +27,7 @@ backend/
     config/               environment parsing and token registry
     crawlers/             offline data-source adapters
     data/                 cleaning and normalization
+    decision/             typed decision adapters and research quality gate
     dex/                  quote adapters and aggregator
     nbbo/                 best bid/ask and route selection
     oracle/               Pyth feed parsing/subscription
@@ -79,11 +80,14 @@ domain controllers.
 4. `DataNormalizerService` currently returns the rows unchanged.
 5. `LlmAgentService` creates a short market summary or a generic fallback.
 6. `StrategyEngineService` runs `SimpleMomentumStrategy`.
-7. Analysis and signals are persisted and a `/offline` Socket.IO event is sent.
+7. The optional typed decision gate evaluates research quality.
+8. Analysis, gate metadata, and approved signals are persisted, then a
+   `/offline` Socket.IO event is sent.
 
 ### Important reality checks
 
-- TradingView and Dune return hard-coded data.
+- TradingView returns hard-coded data. Dune executes a live, partition-filtered
+  aggregation of token buy/sell volume when `DUNE_API_KEY` is configured.
 - CoinMarketCap may silently fall through CoinGecko to hard-coded data.
 - The LLM sees only five rows and is not the strategy engine.
 - RSI signals only occur on rows that already contain RSI and price.
@@ -193,7 +197,7 @@ authority.
   quotes, signals, and executions.
 - Prevent fallback data from entering a live execution policy.
 - Guard trade-state transitions and add idempotency keys.
-- Replace or remove hard-coded TradingView and Dune sources.
+- Replace or remove the hard-coded TradingView source.
 - Implement real normalization, feature timestamps, and signal expiry.
 
 ### Must fix before testnet funds

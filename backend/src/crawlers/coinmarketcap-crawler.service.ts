@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { ConfigService } from '../config/config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { UsageLedgerService } from '../usage-ledger/usage-ledger.service';
 import { CrawledMarketData, CoinmarketcapListing } from './types/crawler.types';
 
 interface CoingeckoMarketEntry {
@@ -20,10 +21,13 @@ export class CoinmarketcapCrawlerService {
   private readonly baseUrl = 'https://pro-api.coinmarketcap.com/v1';
   private readonly coingeckoBaseUrl = 'https://api.coingecko.com/api/v3';
   private readonly externalTimeoutMs = 5_000;
+  private readonly cachedListings = new Map<number, { expiresAt: number; value: any }>();
+  private readonly listingsRequests = new Map<number, Promise<any>>();
 
   constructor(
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
+    private readonly usageLedger: UsageLedgerService,
   ) {}
 
   transformToCrawledData(response: any): CrawledMarketData[] {
@@ -66,6 +70,39 @@ export class CoinmarketcapCrawlerService {
   }
 
   async fetchListings(limit: number = 20): Promise<any> {
+    const cached = this.cachedListings.get(limit);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.logger.debug('Using cached market listings (no external credits consumed)');
+      if (this.usageLedger.enabled) {
+        // Observability only; a cache_hit must never block the cache return.
+        try {
+          await this.usageLedger.recordCacheHit('coinmarketcap', new Date(), 'listings');
+        } catch (error) {
+          this.logger.debug(`cache_hit recording failed: ${(error as Error).message}`);
+        }
+      }
+      return cached.value;
+    }
+    const pending = this.listingsRequests.get(limit);
+    if (pending) {
+      return pending;
+    }
+
+    const request = this.fetchFreshListings(limit);
+    this.listingsRequests.set(limit, request);
+    try {
+      const value = await request;
+      this.cachedListings.set(limit, {
+        expiresAt: Date.now() + this.configService.coinmarketcap.cacheTtlMs,
+        value,
+      });
+      return value;
+    } finally {
+      this.listingsRequests.delete(limit);
+    }
+  }
+
+  private async fetchFreshListings(limit: number): Promise<any> {
     const cmcResponse = await this.tryFetchFromCoinmarketcap(limit);
     if (cmcResponse) {
       this.logger.log(`Fetched ${cmcResponse.data.length} listings from CoinMarketCap`);
@@ -93,13 +130,54 @@ export class CoinmarketcapCrawlerService {
       return null;
     }
 
+    if (this.usageLedger.enabled) {
+      // Budget gate: when the daily credit budget is exhausted (or the
+      // budget check itself fails), skip CMC and fall through to the free
+      // CoinGecko fallback rather than crashing the pipeline.
+      let reservation;
+      try {
+        reservation = await this.usageLedger.reserve('coinmarketcap', new Date(), 1, {
+          unitKind: 'credits',
+          queryKey: 'listings',
+        });
+      } catch (error) {
+        this.logger.warn(
+          `CMC budget check failed, skipping to fallback: ${(error as Error).message}`,
+        );
+        return null;
+      }
+      if (!reservation.allowed) {
+        this.logger.warn(
+          `CoinMarketCap daily budget exhausted (${reservation.hardLimit} credits); using fallback`,
+        );
+        return null;
+      }
+      try {
+        const data = await this.callCoinmarketcap(limit, apiKey);
+        await this.usageLedger.recordActual(
+          'coinmarketcap',
+          new Date(),
+          reservation.reservationId,
+          1,
+          { unitKind: 'credits', queryKey: 'listings' },
+        );
+        return data;
+      } catch (error: any) {
+        await this.usageLedger.recordFailed('coinmarketcap', new Date(), reservation.reservationId, {
+          unitKind: 'credits',
+          queryKey: 'listings',
+        });
+        const status = error?.response?.status;
+        this.logger.warn(
+          `CoinMarketCap fetch failed${status ? ` (HTTP ${status})` : ''}: ${error?.message ?? error}`,
+        );
+        return null;
+      }
+    }
+
+    // Legacy path (USAGE_LEDGER_ENABLED=false) — unchanged behavior.
     try {
-      const response = await axios.get(`${this.baseUrl}/cryptocurrency/listings/latest`, {
-        headers: { 'X-CMC_PRO_API_KEY': apiKey },
-        params: { limit },
-        timeout: this.externalTimeoutMs,
-      });
-      return response.data;
+      return await this.callCoinmarketcap(limit, apiKey);
     } catch (error: any) {
       const status = error?.response?.status;
       this.logger.warn(
@@ -107,6 +185,18 @@ export class CoinmarketcapCrawlerService {
       );
       return null;
     }
+  }
+
+  private async callCoinmarketcap(
+    limit: number,
+    apiKey: string,
+  ): Promise<{ data: CoinmarketcapListing[] }> {
+    const response = await axios.get(`${this.baseUrl}/cryptocurrency/listings/latest`, {
+      headers: { 'X-CMC_PRO_API_KEY': apiKey },
+      params: { limit },
+      timeout: this.externalTimeoutMs,
+    });
+    return response.data;
   }
 
   private async tryFetchFromCoingecko(

@@ -10,14 +10,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the system boundary and
 
 ```mermaid
 flowchart LR
-  Trigger["REST or BullMQ"] --> Crawl["CMC/CoinGecko\nTradingView mock\nDune mock"]
+  Trigger["REST or BullMQ"] --> Crawl["CMC/CoinGecko\nTradingView mock\nDune live DEX volumes"]
   Crawl --> Store[("MarketData")]
   Crawl --> Clean["DataCleaner"]
   Clean --> Normalize["DataNormalizer\ncurrently pass-through"]
   Normalize --> LLM["LLM summary"]
   Normalize --> Strategy["RSI momentum"]
-  LLM --> Analysis[("AnalysisResult")]
-  Strategy --> Signal[("TradeSignal")]
+  LLM --> Gate["Typed decision quality gate\nJEV optional"]
+  Strategy --> Gate
+  Gate --> Analysis[("AnalysisResult + gate metadata")]
+  Gate --> Signal[("TradeSignal")]
   Signal --> Event["Socket.IO /offline"]
 ```
 
@@ -45,7 +47,8 @@ It should not own:
 
 ## Current Limitations
 
-1. TradingView and Dune inputs are hard-coded.
+1. TradingView input is hard-coded. Dune provides live rolling token buy/sell
+   volume by chain and DEX when configured.
 2. Source rows are persisted before cleaning, so the database is a raw
    observation store rather than a normalized research dataset.
 3. Rows from different sources are not joined by a point-in-time rule.
@@ -53,9 +56,13 @@ It should not own:
 5. The only strategy is an RSI threshold on rows containing both price and RSI.
 6. LLM output is generic prose and is not consumed by the deterministic
    strategy.
-7. Signals do not have expiry, feature version, dataset version, or backtest
+7. The optional JEV quality gate is not calibrated against labeled outcomes;
+   it defaults to shadow mode and must not be treated as alpha evidence.
+8. Dune volume is curated chain data, not centralized Robinhood App flow;
+   Robinhood Chain is identified separately as `blockchain=robinhood`.
+9. Signals do not have expiry, feature version, dataset version, or backtest
    evidence.
-8. `BacktestResult` and `CrawlerJob` exist in Prisma but are not used.
+10. `BacktestResult` and `CrawlerJob` exist in Prisma but are not used.
 
 ## Target Data Contract
 
@@ -111,7 +118,7 @@ Before the online engine may consume offline signals:
 
 ### Offline Packet A: Data truth
 
-- Replace hard-coded sources with real adapters or delete them.
+- Replace the remaining hard-coded TradingView source or delete it.
 - Add source health and explicit provenance.
 - Store normalized candles/snapshots separately from raw source rows.
 

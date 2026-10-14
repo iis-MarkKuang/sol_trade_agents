@@ -4,7 +4,11 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { ConfigService } from '../config/config.service.js';
-import { buildChatModel, resolveToolModelCandidates } from '../agents/llm-factory.js';
+import {
+  buildChatModel,
+  isLlmConfigured,
+  resolveToolModelCandidates,
+} from '../agents/llm-factory.js';
 import { RealtimeService } from './realtime.service.js';
 import type { CrossChainArbSignal } from '../strategy/strategies/cross-chain-arb.strategy.js';
 
@@ -43,7 +47,7 @@ export class CrossChainAgentService {
     private readonly configService: ConfigService,
   ) {
     const cfg = configService.llm;
-    if (cfg.openAIApiKey || cfg.azureOpenAIApiKey) {
+    if (isLlmConfigured(configService)) {
       const models = resolveToolModelCandidates(configService);
       this.logger.log(
         `Cross-chain agent LLM ready (provider=${cfg.provider}, models=${models.join(' → ')})`,
@@ -65,16 +69,16 @@ User request: {prompt}`,
     };
 
     const arbSchema: z.ZodTypeAny = z.object({
-      assets: z
-        .string()
-        .optional()
-        .describe('Comma-separated base assets to scan, e.g. "BTC,ETH"'),
+      assets: z.string().optional().describe('Comma-separated base assets to scan, e.g. "BTC,ETH"'),
     });
     // @ts-ignore LangChain tool() generic over zod produces TS2589 here; runtime is unaffected.
     const arbTool = tool(
       async (input: { assets?: string }) => {
         const assets = input.assets
-          ? input.assets.split(',').map((a) => a.trim()).filter(Boolean)
+          ? input.assets
+              .split(',')
+              .map((a) => a.trim())
+              .filter(Boolean)
           : undefined;
         const { signals, snapshots } = await this.realtime.getCrossChainArb({
           ...baseOptions,
@@ -114,11 +118,7 @@ User request: {prompt}`,
       },
     );
 
-    const hasLlm =
-      Boolean(this.configService.llm.openAIApiKey) ||
-      Boolean(this.configService.llm.azureOpenAIApiKey);
-
-    if (!hasLlm) {
+    if (!isLlmConfigured(this.configService)) {
       this.logger.warn('LLM not configured — running deterministic cross-chain plan');
       const { signals } = await this.realtime.getCrossChainArb(baseOptions);
       return {
@@ -139,7 +139,14 @@ User request: {prompt}`,
       if (!llm) continue;
 
       try {
-        const result = await this.invokePlanLlm(llm, formatted, arbTool, nbboTool, baseOptions, request.prompt);
+        const result = await this.invokePlanLlm(
+          llm,
+          formatted,
+          arbTool,
+          nbboTool,
+          baseOptions,
+          request.prompt,
+        );
         return { ...result, model };
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);

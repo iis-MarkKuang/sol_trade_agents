@@ -3,6 +3,7 @@ import { AgentsModule } from '../agents/agents.module';
 import { ConfigModule } from '../config/config.module';
 import { CrawlersModule } from '../crawlers/crawlers.module';
 import { DataModule } from '../data/data.module';
+import { DecisionModule } from '../decision/decision.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StrategyModule } from '../strategy/strategy.module';
 import { OfflineAgentController } from './offline-agent.controller';
@@ -14,6 +15,7 @@ import { SchedulerService } from './scheduler.service';
   imports: [
     ConfigModule,
     DataModule,
+    DecisionModule,
     CrawlersModule,
     AgentsModule,
     StrategyModule,

@@ -9,6 +9,11 @@ import { StrategyEngineService } from '../strategy/strategy-engine.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TradeSignal } from '../strategy/strategy.interface';
 import { OfflineAgentGateway } from './offline-agent.gateway';
+import {
+  ResearchQualityGateResult,
+  ResearchQualityGateService,
+} from '../decision/research-quality-gate.service';
+import type { Prisma } from '@prisma/client';
 
 export interface PipelineSummary {
   startedAt: string;
@@ -22,6 +27,8 @@ export interface PipelineSummary {
   cleaned: number;
   normalized: number;
   signalsGenerated: number;
+  signalsPersisted: number;
+  qualityGate: ResearchQualityGateResult;
   analysisId?: string;
   analysisPreview: string;
 }
@@ -42,6 +49,7 @@ export class OfflineAgentService {
     private readonly dataNormalizer: DataNormalizerService,
     private readonly llmAgent: LlmAgentService,
     private readonly strategyEngine: StrategyEngineService,
+    private readonly qualityGate: ResearchQualityGateService,
     private readonly prisma: PrismaService,
     private readonly gateway: OfflineAgentGateway,
   ) {}
@@ -61,7 +69,6 @@ export class OfflineAgentService {
   }
 
   private async runPipelineInternal(startedAt: Date): Promise<PipelineSummary> {
-
     const [coinmarketcapData, tradingviewData, duneData] = await Promise.all([
       this.coinmarketcapCrawler.run(20).catch((err) => {
         this.logger.warn(`CoinMarketCap crawler failed: ${err.message}`);
@@ -82,16 +89,24 @@ export class OfflineAgentService {
     const normalized = this.dataNormalizer.normalizeData(cleaned);
 
     const analysisContent = await this.llmAgent.generateAnalysis(normalized);
+    const signals = await this.strategyEngine.runAllStrategies(normalized);
+    const qualityGate = await this.qualityGate.evaluate({
+      marketData: normalized,
+      analysis: analysisContent,
+      signals,
+    });
+
     const analysisRow = await this.prisma.analysisResult.create({
       data: {
         timestamp: new Date(),
         type: 'MARKET_OVERVIEW',
         content: analysisContent,
+        metadata: { qualityGate } as unknown as Prisma.InputJsonValue,
       },
     });
 
-    const signals = await this.strategyEngine.runAllStrategies(normalized);
-    await this.persistSignals(signals);
+    const acceptedSignals = qualityGate.approved ? signals : [];
+    await this.persistSignals(acceptedSignals);
 
     const finishedAt = new Date();
     const summary: PipelineSummary = {
@@ -106,14 +121,14 @@ export class OfflineAgentService {
       cleaned: cleaned.length,
       normalized: normalized.length,
       signalsGenerated: signals.length,
+      signalsPersisted: acceptedSignals.length,
+      qualityGate,
       analysisId: analysisRow.id,
       analysisPreview:
-        analysisContent.length > 240
-          ? `${analysisContent.slice(0, 240)}…`
-          : analysisContent,
+        analysisContent.length > 240 ? `${analysisContent.slice(0, 240)}…` : analysisContent,
     };
     this.logger.log(
-      `Offline pipeline completed in ${summary.durationMs}ms: ${JSON.stringify(summary.crawled)} signals=${summary.signalsGenerated}`,
+      `Offline pipeline completed in ${summary.durationMs}ms: ${JSON.stringify(summary.crawled)} signals=${summary.signalsPersisted}/${summary.signalsGenerated} qualityGate=${summary.qualityGate.status}`,
     );
     this.gateway.emit({
       type: 'pipeline.completed',

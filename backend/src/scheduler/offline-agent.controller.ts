@@ -1,14 +1,8 @@
-import {
-  Controller,
-  Get,
-  HttpException,
-  HttpStatus,
-  Logger,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus, Logger, Post, Query } from '@nestjs/common';
 import { OfflineAgentService } from './offline-agent.service';
 import { SchedulerService } from './scheduler.service';
+import { ConfigService } from '../config/config.service';
+import { isLlmConfigured } from '../agents/llm-factory';
 
 @Controller('agent')
 export class OfflineAgentController {
@@ -17,12 +11,35 @@ export class OfflineAgentController {
   constructor(
     private readonly offlineAgent: OfflineAgentService,
     private readonly scheduler: SchedulerService,
+    private readonly configService: ConfigService,
   ) {}
 
   @Get('status')
   status() {
     return {
       schedulerEnabled: this.scheduler.isEnabled(),
+      workflow: {
+        sources: {
+          coinmarketcap: this.configService.coinmarketcapApiKey ? 'live' : 'fallback',
+          dune: this.configService.dune.apiKey
+            ? 'live'
+            : this.configService.dune.useMock
+              ? 'mock'
+              : 'unconfigured',
+          tradingview: 'mock',
+        },
+        analysis: {
+          provider: this.configService.llm.provider,
+          configured: isLlmConfigured(this.configService),
+        },
+        decision: {
+          provider: this.configService.decision.provider,
+          configured:
+            this.configService.decision.provider !== 'none' &&
+            Boolean(this.configService.decision.jevApiKey),
+          mode: this.configService.decision.qualityGateMode,
+        },
+      },
       timestamp: new Date().toISOString(),
     };
   }
@@ -63,12 +80,7 @@ export class OfflineAgentController {
   }
 }
 
-function clampLimit(
-  raw: string | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
+function clampLimit(raw: string | undefined, fallback: number, min: number, max: number): number {
   if (!raw) {
     return fallback;
   }

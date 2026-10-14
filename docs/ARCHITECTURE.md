@@ -27,9 +27,11 @@ objectives remain an operator decision in
 | NestJS API and React dashboard | Implemented | One backend entry point: `backend/src/main.ts` |
 | Offline pipeline orchestration | Implemented | Manual or BullMQ scheduled |
 | CMC/CoinGecko market data | Partial | Live source with static fallback |
-| TradingView and Dune ingestion | Simulated | Hard-coded demo rows |
+| TradingView ingestion | Simulated | Hard-coded demo rows |
+| Dune ingestion | Implemented | Live 24h token buy/sell volume by chain and DEX |
 | Data cleaning and normalization | Partial | Normalization is currently a pass-through |
 | LLM market summary | Partial | Live when configured, generic mock otherwise |
+| Typed decision quality gate | Prototype | Optional JEV adapter; shadow mode by default |
 | Offline strategy | Prototype | RSI threshold strategy only |
 | Pyth pricing | Partial | Live probe/SSE with automatic mock fallback |
 | DEX quote aggregation | Prototype | Jupiter/Raydium/Orca adapters exist; not production validated |
@@ -49,7 +51,7 @@ production evidence.
 ```mermaid
 flowchart LR
   subgraph Research["Offline research plane"]
-    Sources["CMC / CoinGecko\nTradingView / Dune (currently mock)"]
+    Sources["CMC / CoinGecko\nTradingView mock / Dune live"]
     Pipeline["Clean -> normalize -> features"]
     Analysis["LLM explanation"]
     Strategy["Deterministic strategies"]
@@ -135,13 +137,15 @@ submit it, or verify confirmation.
 
 ```text
 POST /agent/run-pipeline or BullMQ
-  -> CoinMarketCap/CoinGecko + TradingView mock + Dune mock
+  -> CoinMarketCap/CoinGecko + TradingView mock + Dune live DEX aggregation
   -> persist raw source rows
   -> cleaner
   -> pass-through normalizer
   -> LLM summary
   -> SimpleMomentumStrategy
-  -> persist signals
+  -> optional typed decision quality gate
+  -> persist analysis with gate metadata
+  -> persist approved signals
   -> Socket.IO event
 ```
 
@@ -157,7 +161,7 @@ feature versioning, data quality gates, backtests, and signal expiry.
 | Offline orchestration | `backend/src/scheduler/` |
 | Ingestion | `backend/src/crawlers/` |
 | Cleaning/features | `backend/src/data/` |
-| Research and signals | `backend/src/agents/`, `backend/src/strategy/` |
+| Research and signals | `backend/src/agents/`, `backend/src/decision/`, `backend/src/strategy/` |
 | Live market access | `backend/src/oracle/`, `backend/src/dex/` |
 | Quote/risk orchestration | `backend/src/agent/realtime-agent-core.ts` |
 | API, persistence, events | `backend/src/realtime/` |
@@ -202,7 +206,7 @@ not be the only record of a trade.
 
 ### Packet 1: Research foundation
 
-- Replace mock TradingView/Dune inputs or remove them.
+- Replace the mock TradingView input or remove it.
 - Implement point-in-time normalized candles and feature versions.
 - Add backtest, walk-forward evaluation, fees, slippage, and signal expiry.
 - Promote signals only after deterministic acceptance criteria pass.

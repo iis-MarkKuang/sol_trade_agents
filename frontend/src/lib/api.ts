@@ -16,6 +16,17 @@ export interface PipelineSummary {
   cleaned: number;
   normalized: number;
   signalsGenerated: number;
+  signalsPersisted: number;
+  qualityGate: {
+    mode: "disabled" | "shadow" | "enforce";
+    status: "disabled" | "pass" | "review" | "reject" | "error";
+    approved: boolean;
+    provider?: string;
+    model?: string;
+    confidence?: number;
+    latencyMs?: number;
+    reason?: string;
+  };
   analysisId?: string;
   analysisPreview: string;
 }
@@ -42,6 +53,7 @@ export interface AnalysisRow {
   content: string;
   timestamp: string;
   token?: string | null;
+  metadata?: unknown;
 }
 
 export interface TradeSignalRow {

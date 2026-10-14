@@ -72,11 +72,11 @@ REDIS_URL="redis://localhost:6379"
 # APIs
 COINMARKETCAP_API_KEY="your_coinmarketcap_api_key"
 DUNE_API_KEY="your_dune_api_key"
-OPENAI_API_KEY="your_openai_api_key"
+DEEPSEEK_API_KEY="your_deepseek_api_key"
 
 # LLM Config
-LLM_PROVIDER="openai"
-LLM_MODEL="gpt-4o"
+LLM_PROVIDER="deepseek"
+DEEPSEEK_MODEL="deepseek-chat"
 LLM_TEMPERATURE="0.7"
 ```
 
@@ -172,7 +172,7 @@ Navigate to **Insights** (default route).
 
 1. Click **Run pipeline now**.
    - Triggers `POST /agent/run-pipeline`.
-   - Backend runs: crawl (CMC + TradingView + Dune mocks) → clean → normalize →
+   - Backend runs: crawl (CMC + TradingView mock + live Dune DEX data) → clean → normalize →
      LLM analysis (mock fallback if no `OPENAI_API_KEY`) → strategy signals.
    - The Pipeline Live Feed card at the bottom shows the WebSocket
      `pipeline.started` / `pipeline.completed` events.
@@ -382,25 +382,58 @@ This makes the story bidirectional: our agent **calls** the Injective MCP server
 | `INJECTIVE_MNEMONIC` | _(empty)_ | Injective account mnemonic for MCP signing. Empty → `MockInjectiveTradeExecutor` (simulated tx hashes) |
 | `INJECTIVE_HELI_MARKETS` | _(empty)_ | Optional overrides, e.g. `INJ/USDC=INJ/USDC:spot,BTC/USDT=BTC/USDT:derivative` |
 
-### LLM provider (Azure OpenAI for Nova credits)
+### LLM provider adapters
 
-The NL quant assistant and offline LLM agent share a single factory (`backend/src/agents/llm-factory.ts`) that supports both the public OpenAI API and **Azure OpenAI Service**, so you can spend the Nova Program's Microsoft Azure credits instead of your own OpenAI quota.
+The NL quant assistant and offline LLM agent use the same adapter registry in
+`backend/src/agents/`. DeepSeek and OpenAI have separate credentials, endpoints,
+and model defaults even though both use an OpenAI-compatible transport. Azure
+OpenAI remains available for Nova credits.
 
 | Env Var | When | Description |
 |---------|------|-------------|
-| `LLM_PROVIDER` | optional | `azure` or `openai`. Auto-detects: Azure wins if `AZURE_OPENAI_API_KEY` is set. |
+| `LLM_PROVIDER` | optional | `deepseek`, `openai`, or `azure`. Auto-detect order: Azure, DeepSeek, OpenAI. |
+| `DEEPSEEK_API_KEY` | DeepSeek | DeepSeek platform API key |
+| `DEEPSEEK_BASE_URL` | DeepSeek | Default `https://api.deepseek.com/v1` |
+| `DEEPSEEK_MODEL` | DeepSeek | Default `deepseek-chat` |
+| `OPENAI_API_KEY` | OpenAI | OpenAI API key |
+| `OPENAI_BASE_URL` | OpenAI | Optional compatible gateway such as OpenRouter |
+| `OPENAI_MODEL` | OpenAI | Default `gpt-4o-mini` |
 | `AZURE_OPENAI_API_KEY` | Azure | Azure OpenAI resource key |
 | `AZURE_OPENAI_API_INSTANCE_NAME` | Azure | Azure resource name |
 | `AZURE_OPENAI_API_DEPLOYMENT_NAME` | Azure | Deployment name (e.g. `gpt-4o-mini`) |
 | `AZURE_OPENAI_API_VERSION` | Azure | API version, default `2024-08-01-preview` |
 | `AZURE_OPENAI_BASE_PATH` | Azure | Optional custom endpoint |
-| `OPENAI_API_KEY` | OpenAI | Public OpenAI API key |
-| `OPENAI_BASE_URL` | OpenAI | Optional custom base URL (e.g. proxy) |
-| `LLM_MODEL` | OpenAI | Model name, default `gpt-4o-mini` |
+| `LLM_MODEL` | Any | Optional override for the selected provider model |
 
-When neither Azure nor OpenAI credentials are present, both services fall back
-to deterministic/mock output so the demo still runs end-to-end. Mock output is
-not suitable for live trading.
+When the selected provider has no credentials, both services use deterministic
+demo output. Mock output is not suitable for live trading.
+
+### Typed decision quality gate (JEV)
+
+Typed decision models use a separate `DecisionAdapter` contract because they
+return choices and probabilities rather than generated text. The first adapter
+supports TypeSafe JEV as an offline research quality gate:
+
+```env
+DECISION_PROVIDER="jev"
+TYPESAFE_API_KEY="your_typesafe_key"
+JEV_MODEL="jev-1.13.0"
+JEV_QUALITY_GATE_MODE="shadow"
+```
+
+`shadow` records the decision without suppressing signals. `enforce` only
+persists signals when the gate passes its configured confidence threshold.
+Deterministic strategy generation and risk controls remain authoritative.
+
+Run the deterministic gather → analyze → decide workflow simulation with:
+
+```bash
+cd backend
+npm run test:workflow
+```
+
+`GET /agent/status` reports whether each source and model is live, fallback,
+mocked, or unconfigured without returning credential values.
 
 ### Run the Injective-enabled demo
 

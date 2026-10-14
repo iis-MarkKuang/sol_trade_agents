@@ -22,7 +22,7 @@ Legend: `Done`, `Partial`, `Demo`, `Not started`, `Blocked by OP`.
 |---|---|---|
 | CMC/CoinGecko ingestion | Partial | Live with static fallback |
 | TradingView ingestion | Demo | Hard-coded rows |
-| Dune ingestion | Demo | Hard-coded rows |
+| Dune ingestion | Done | Live partition-filtered 24h DEX volume by chain/platform/token |
 | Cleaning | Partial | Basic duplicate/negative-value filters |
 | Normalization/features | Demo | Pass-through implementation |
 | LLM summary | Partial | Configurable model with generic fallback |
