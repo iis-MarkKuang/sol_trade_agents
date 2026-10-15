@@ -1,6 +1,6 @@
-export type DexSource = "jupiter" | "raydium" | "orca" | "injective_helix" | "mock";
+export type DexSource = "jupiter" | "raydium" | "orca" | "injective_helix" | "monad_dex" | "mock";
 
-export type ChainId = "solana" | "injective";
+export type ChainId = "solana" | "injective" | "monad";
 
 export type QuoteSide = "bid" | "ask";
 
@@ -132,6 +132,32 @@ export interface InjectiveExecutionPlan {
   reason: string;
 }
 
+/**
+ * Execution plan for a Monad (EVM L1, chain id 143 mainnet / 10143 testnet) route.
+ * The winning DEX quote lives on an EVM DEX (Uniswap V3/V4, 0x/1inch aggregator,
+ * Kuru/Clober orderbook); execution is an EVM transaction signed via viem.
+ * Mirrors InjectiveExecutionPlan but carries EVM-specific routing fields.
+ */
+export interface MonadExecutionPlan {
+  chainId: 143 | 10143;
+  dex: "uniswap_v3" | "0x" | "1inch" | "monorail" | "mock";
+  /** ERC-20 contract address of the input token. */
+  tokenIn: string;
+  /** ERC-20 contract address of the output token. */
+  tokenOut: string;
+  side: TradeSide;
+  /** Human-readable input amount (string to preserve precision). */
+  amountIn: string;
+  /** Human-readable minimum output amount (slippage guard). */
+  minAmountOut: string;
+  /** Recipient EVM address. */
+  to: string;
+  /** Unix deadline (seconds) for the swap. */
+  deadline: number;
+  notionalUsd: number;
+  reason: string;
+}
+
 export interface TradeExecutionPlan {
   status: "ready" | "rejected";
   intent: TradeIntent;
@@ -143,5 +169,6 @@ export interface TradeExecutionPlan {
   rejectionReason?: string;
   unsignedTransactionBase64?: string;
   injectiveExecutionPlan?: InjectiveExecutionPlan;
+  monadExecutionPlan?: MonadExecutionPlan;
   createdAt: number;
 }

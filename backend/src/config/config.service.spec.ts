@@ -26,6 +26,14 @@ const LLM_ENV_KEYS = [
   'USAGE_LEDGER_LLM_WARNING_PCT',
   'USAGE_LEDGER_JEV_HARD_LIMIT_PER_DAY',
   'USAGE_LEDGER_JEV_WARNING_PCT',
+  'ENABLE_MONAD',
+  'MONAD_NETWORK',
+  'MONAD_RPC_URL',
+  'MONAD_PRIVATE_KEY',
+  'MONAD_DEX_MODE',
+  'ZEROX_API_KEY',
+  'ONEINCH_API_KEY',
+  'MONAD_MOCK_PREMIUM_BPS',
 ] as const;
 
 describe('ConfigService LLM providers', () => {
@@ -143,5 +151,30 @@ describe('ConfigService LLM providers', () => {
     expect(config.dune.warningPct).toBe(100);
     expect(config.coinmarketcap.hardLimitPerDay).toBe(1);
     expect(config.llm.hardLimitPerDay).toBe(1);
+  });
+
+  it('monad defaults to disabled with mainnet RPC and 0x dex mode', () => {
+    const config = new ConfigService().monad;
+
+    expect(config.enabled).toBe(false);
+    expect(config.network).toBe('mainnet');
+    expect(config.rpcUrl).toBe('https://rpc.monad.xyz');
+    expect(config.dexMode).toBe('0x');
+    expect(config.mockPremiumBps).toBe(30);
+    expect(config.privateKey).toBeUndefined();
+  });
+
+  it('monad can be enabled and parses a non-default dex mode', () => {
+    process.env.ENABLE_MONAD = 'true';
+    process.env.MONAD_NETWORK = 'testnet';
+    process.env.MONAD_DEX_MODE = '1inch';
+    process.env.MONAD_MOCK_PREMIUM_BPS = '45';
+
+    const config = new ConfigService().monad;
+
+    expect(config.enabled).toBe(true);
+    expect(config.network).toBe('testnet');
+    expect(config.dexMode).toBe('1inch');
+    expect(config.mockPremiumBps).toBe(45);
   });
 });

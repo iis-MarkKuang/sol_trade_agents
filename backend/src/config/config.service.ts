@@ -63,6 +63,19 @@ const ConfigSchema = z.object({
   INJECTIVE_MNEMONIC: z.string().optional(),
   INJECTIVE_HELI_MARKETS: z.string().optional(),
 
+  // Monad integration (EVM-compatible L1, chain id 143 mainnet / 10143 testnet).
+  // Defaults off so current behavior is unchanged. The DEX adapter has an
+  // aggregator-API mode (0x/1inch) plus a keyless mock fallback; the executor
+  // uses viem direct signing when MONAD_PRIVATE_KEY is set, mock otherwise.
+  ENABLE_MONAD: booleanFromString(false),
+  MONAD_NETWORK: z.enum(['testnet', 'mainnet']).default('mainnet'),
+  MONAD_RPC_URL: z.string().default('https://rpc.monad.xyz'),
+  MONAD_PRIVATE_KEY: z.string().optional(),
+  MONAD_DEX_MODE: z.enum(['0x', '1inch', 'uniswap_v3', 'mock']).default('0x'),
+  ZEROX_API_KEY: z.string().optional(),
+  ONEINCH_API_KEY: z.string().optional(),
+  MONAD_MOCK_PREMIUM_BPS: numberFromString(30),
+
   // Injective Agent Identity (ERC-8004). Read-only registry browse uses viem
   // directly. Real on-chain registration requires the @injective/agent-sdk
   // (not yet on npm) + Pinata JWT; the mock path covers the demo otherwise.
@@ -216,6 +229,19 @@ export class ConfigService {
       mcpBin: this.config.INJECTIVE_MCP_BIN,
       mnemonic: this.config.INJECTIVE_MNEMONIC,
       helixMarkets: this.config.INJECTIVE_HELI_MARKETS,
+    };
+  }
+
+  get monad() {
+    return {
+      enabled: this.config.ENABLE_MONAD,
+      network: this.config.MONAD_NETWORK,
+      rpcUrl: this.config.MONAD_RPC_URL,
+      privateKey: this.config.MONAD_PRIVATE_KEY,
+      dexMode: this.config.MONAD_DEX_MODE,
+      zeroxApiKey: this.config.ZEROX_API_KEY,
+      oneinchApiKey: this.config.ONEINCH_API_KEY,
+      mockPremiumBps: Math.max(0, Math.floor(this.config.MONAD_MOCK_PREMIUM_BPS)),
     };
   }
 
