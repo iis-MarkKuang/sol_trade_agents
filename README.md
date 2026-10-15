@@ -1,467 +1,387 @@
-# Solana Frontier Web3 LLM Trading Agent
+# Solana ↔ Injective Cross-Chain Quant Agent
 
-A research and execution prototype for a near-real-time quantitative trading
-engine. It combines an offline market-analysis pipeline with live/mock market
-quotes, deterministic pre-trade risk checks, and experimental Solana/Injective
-execution adapters.
+An open-source, near-real-time **cross-chain quantitative trading agent** that bridges
+**Solana** DEXs and the **Injective Helix** exchange. It pairs an offline market-research
+pipeline with a live nBBO (national best bid/offer) engine, deterministic pre-trade risk
+checks, and a natural-language quant assistant — all exposed as an on-chain
+**ERC-8004 agent** that also serves its own **MCP endpoint**.
 
-> **Current boundary:** the project can prepare and persist trade plans, but it
-> is not yet a production autonomous trading engine. Solana signing and
-> confirmation are not wired, several data sources use mock fallbacks, and
-> cross-chain arbitrage is a research demo. Read
-> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the target architecture and
-> [`docs/CODE_WALKTHROUGH.md`](docs/CODE_WALKTHROUGH.md) for the verified code
-> path.
-
-> **Need to run or deploy this?** See [`docs/MANUAL.md`](docs/MANUAL.md) — local startup + Azure demo website deployment.
+> **Status:** research & demo prototype. It can prepare and persist trade plans and run
+> the full pipeline end-to-end with **zero paid API keys** (mock fallbacks). Solana
+> signing is not wired; Injective trades are simulated unless you provide a testnet
+> mnemonic. Not production trading software.
 
 ---
 
-## 📁 Project Structure
-```
-sol_trade_agent/
-├── docs/                      # Documentation
-│   ├── ARCHITECTURE.md        # High-level system architecture
-│   ├── CODE_WALKTHROUGH.md    # Codebase walkthrough and directory guide
-│   ├── offline-agent-design.md  # Detailed offline agent design
-│   ├── realtime-agent-design.md # Detailed realtime agent design
-│   ├── OP_Pending_Items.md     # Product/operator decisions
-│   └── progress-tracker.md    # Project progress tracking
-├── backend/                   # NestJS backend
-│   ├── src/
-│   │   ├── prisma/            # Prisma ORM module
-│   │   ├── main.ts            # NestJS entry point
-│   │   └── app.module.ts      # Main app module
-│   ├── prisma/
-│   │   └── schema.prisma      # Database schema
-│   └── ...config files
-├── frontend/                  # Vite + React + Tailwind frontend
-├── supabase/                  # Supabase local development & migrations
-│   ├── migrations/            # Database migrations
-│   └── config.toml            # Supabase config
-└── docker-compose.yml         # (Optional) Local Redis if not using Supabase Edge Functions
-```
+## ✨ Features
+
+- **Offline research pipeline** — crawl CoinMarketCap + TradingView + Dune, clean &
+  normalize, run an LLM analysis, emit BUY/SELL strategy signals.
+- **Realtime nBBO engine** — aggregate quotes across Solana DEXes (Jupiter/Raydium/Orca)
+  **and** Injective Helix into a single cross-chain best bid/offer.
+- **Cross-chain arbitrage scanner** — detect BTC/ETH spreads between Solana and Injective,
+  net of bridge cost.
+- **Deterministic risk gate** — slippage / notional / liquidity / oracle-deviation caps
+  applied to every prepared trade (LLM never has execution authority).
+- **Natural-language quant assistant** — ask "find me an arb for BTC between Solana and
+  Injective" and get a plan via LangChain tools.
+- **ERC-8004 agent identity** — our agent registers on the Injective Identity Registry and
+  **exposes its own MCP server** (`POST /mcp`) with 4 callable tools.
+- **Provider-neutral usage ledger** — optional cost controls for Dune / CMC / LLM / JEV
+  with Postgres as source of truth + Redis hot-path cache.
+- **Typed decision quality gate (JEV)** — optional shadow/enforce gate for research signals.
 
 ---
 
-## 🚀 Quickstart - Supabase Only
+## 📸 Sneak peek
 
-### Step 1: Install Docker (if you haven't already)
-Supabase local dev requires Docker
+### Insights page (offline agent)
 
-### Step 2: Start the local Supabase stack
+**Empty state** — before the first pipeline run:
+
+![Insights page — empty](docs/images/insights-initial.png)
+
+**After running the pipeline** — crawl counts, LLM analysis, trade signals, and the
+cross-chain arbitrage panel populate:
+
+![Insights page — populated](docs/images/insights-populated.png)
+
+### Live Trading page (realtime agent)
+
+Agent identity card, nBBO snapshot, and the cross-chain arbitrage scanner:
+
+![Live Trading page](docs/images/live-trading.png)
+
+The cross-chain arbitrage scanner flags BTC/ETH net edge after bridge cost:
+
+![Cross-chain arbitrage scanner](docs/images/live-arb-scanner.png)
+
+Prepare a trade — the nBBO pipeline runs (Pyth oracle → DEX aggregation → route
+selection → risk check) and a plan summary card appears:
+
+![Prepare trade](docs/images/live-trade-plan.png)
+
+The trade event feed streams lifecycle events over WebSocket and recent trades persist
+to Postgres:
+
+![Trade event feed](docs/images/live-event-feed.png)
+
+---
+
+## 📋 Prerequisites
+
+| Tool | Why | Min version |
+|---|---|---|
+| **Node.js** | backend + frontend | 20.x |
+| **npm** | dependencies | 10.x |
+| **Docker Desktop** | local Postgres / Redis | latest |
+| `supabase` CLI | local Postgres (`npx supabase start`) | latest (via npx) |
+| Git | clone | any |
+
+> No Phantom wallet, no real Solana DEX traffic, no real funds needed for the demo.
+> Solana trades are mock-signed; Injective trades are simulated unless you set
+> `INJECTIVE_MNEMONIC`.
+
+---
+
+## 🚀 Quickstart (5 minutes, zero API keys)
+
+The demo runs end-to-end with just a local Postgres — every external API has a safe
+default or mock fallback.
+
+### Step 1 — Start local Postgres
+
 ```bash
-# From project root
+# From the repo root — starts Postgres + Supabase Studio at http://localhost:54323
 npx supabase start
 ```
 
-This will start:
-- Postgres database
-- Supabase Studio (UI at http://localhost:54323)
-- And more!
+> **Standalone Postgres alternative:** if `supabase start` is too slow, run a plain
+> Postgres container instead:
+> ```bash
+> docker run -d --name sol-pg -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine
+> docker exec sol-pg psql -U postgres -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+> ```
+> Then set `DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/postgres"`.
 
-### Step 3: Configure your .env
-Update `/backend/.env` with the local database URL printed by `supabase start`:
-```env
-# Database (Local Supabase - provided by "supabase start")
-DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+### Step 2 — Configure & start the backend
 
-# Redis (local or use Upstash)
-REDIS_URL="redis://localhost:6379"
-
-# APIs
-COINMARKETCAP_API_KEY="your_coinmarketcap_api_key"
-DUNE_API_KEY="your_dune_api_key"
-DEEPSEEK_API_KEY="your_deepseek_api_key"
-
-# LLM Config
-LLM_PROVIDER="deepseek"
-DEEPSEEK_MODEL="deepseek-chat"
-LLM_TEMPERATURE="0.7"
-```
-
-### Step 4: Set Up the Backend
 ```bash
 cd backend
-
-# 1. Install all dependencies
+cp .env.example .env          # only DATABASE_URL is strictly required
 npm install
-
-# 2. Generate Prisma Client
-npm run db:generate
-
-# 3. Sync the Prisma schema to your local Postgres
-#    (creates market_data / trade_signal / realtime_trade / …)
-npm run db:push
-
-# 4. Start NestJS dev server
-npm run start:dev
+npm run db:generate           # generate Prisma client
+npm run db:push               # sync schema to Postgres (creates all tables)
+npm run start:dev             # http://localhost:3000
 ```
 
-> Note: `db:push` is the canonical schema sync for this project — it always
-> matches what the Prisma Client expects. The `supabase/migrations/*.sql`
-> files exist as a parallel manual-migration path; they are kept in sync but
-> not required for the demo.
-
-### Step 5: Verify Setup
-- Check Supabase Studio: http://localhost:54323
-- Check health endpoint: http://localhost:3000/health
-- Run a full offline pipeline (no Redis required):
-  `curl -X POST http://localhost:3000/agent/run-pipeline`
-- Inspect realtime nBBO for SOL/USDC:
-  `curl 'http://localhost:3000/realtime/market/nbbo?pair=SOL/USDC'`
-
-### Step 6: Run the Frontend
+Verify it's up:
 
 ```bash
-cd frontend
-npm install
-npm run dev
-# Open http://localhost:5173
+curl http://localhost:3000/health
+# → {"status":"ok",...}
 ```
 
-The frontend has two pages:
-- **Insights** — offline agent (run pipeline, view analyses + signals)
-- **Live Trading** — realtime agent (nBBO snapshot, prepare/confirm trade, live event feed)
-
-The dev server proxies `/api` and `/socket.io` to `http://localhost:3000`.
-
----
-
-## 🎬 Demo Flow (no Redis, no wallet required)
-
-Everything below works end-to-end with just Supabase running locally — no Redis,
-no Phantom wallet, no real DEX traffic.
-
-### One-time setup
+### Step 3 — Start the frontend
 
 ```bash
-# 1. From repo root — start local Postgres (Supabase)
-npx supabase start
-
-# 2. Configure backend (only DATABASE_URL is strictly required)
-cd backend
-cp .env.example .env   # (skip if .env already exists)
-npm install
-npm run db:generate
-npm run db:push        # syncs Prisma schema to the live DB
-
-# 3. Configure frontend
 cd ../frontend
 npm install
+npm run dev                   # http://localhost:5173
 ```
 
-### Start both servers (in two terminals)
+Open <http://localhost:5173>. The top-right **Realtime WS** + **Offline WS** indicators
+should turn green. You're ready to explore.
 
-```bash
-# Terminal A — backend (NestJS, http://localhost:3000)
-cd backend
-npm run start:dev
+---
 
-# Terminal B — frontend (Vite, http://localhost:5173)
-cd frontend
-npm run dev
-```
+## 🧭 Using the app
 
-Open <http://localhost:5173>. The top-right WS indicators should turn green
-("Realtime WS" and "Offline WS").
+The frontend has two pages, linked in the top nav.
 
-### 1. Offline Agent — Insights page
+### 1. Insights page (offline agent)
 
-Navigate to **Insights** (default route).
+This is the default route. It runs the offline research pipeline: crawl → clean →
+normalize → LLM analysis → strategy signals.
 
-1. Click **Run pipeline now**.
-   - Triggers `POST /agent/run-pipeline`.
-   - Backend runs: crawl (CMC + TradingView mock + live Dune DEX data) → clean → normalize →
-     LLM analysis (mock fallback if no `OPENAI_API_KEY`) → strategy signals.
-   - The Pipeline Live Feed card at the bottom shows the WebSocket
-     `pipeline.started` / `pipeline.completed` events.
-2. The page auto-refreshes when completion arrives. You should now see:
-   - **Last Run Summary** card with crawl counts + duration.
-   - **Latest LLM Analysis** with the generated insight.
-   - **Trade Signals** list (BUY/SELL with reasons from `SimpleMomentumStrategy`).
-   - **Recent Market Data** table with the ingested rows.
+1. Click **Run pipeline now** (triggers `POST /agent/run-pipeline`).
+2. The **Pipeline Live Feed** card streams `pipeline.started` / `pipeline.completed`
+   WebSocket events in real time.
+3. When it completes, the page auto-refreshes and you'll see:
+   - **Last Run Summary** — crawl counts (CMC, TradingView, Dune) + duration.
+   - **Latest LLM Analysis** — the generated insight (mock text if no LLM key).
+   - **Trade Signals** — BUY/SELL with reasons from the momentum strategy.
+   - **Recent Market Data** — the ingested rows.
+   - **Cross-Chain Arbitrage** — Solana ↔ Injective spread panel.
 
-Optional — verify via curl:
+**Without any API keys**, the LLM falls back to deterministic demo output and Dune uses
+mock data (`DUNE_USE_MOCK=true`), so the pipeline still produces a full result.
+
+<details>
+<summary>Verify via curl</summary>
 
 ```bash
 curl -X POST http://localhost:3000/agent/run-pipeline | jq
 curl 'http://localhost:3000/agent/analysis?limit=3' | jq
 curl 'http://localhost:3000/agent/signals?limit=10' | jq
 ```
+</details>
 
-### 2. Realtime Agent — Live Trading page
+### 2. Live Trading page (realtime agent)
 
-Click **Live Trading** in the top nav.
+Click **⚡ Live Trading** in the top nav.
 
-1. Top stat cards show:
-   - **Oracle SOL/USDC** — live Pyth price streaming via WebSocket (mock-friendly).
-   - **Best Bid / Best Ask / Spread** — aggregated nBBO from the mock DEX
-     (Jupiter/Raydium/Orca adapters are gated behind `ENABLE_REAL_DEX=true`).
-2. Fill the **Prepare Trade** form:
-   - Pair: `SOL/USDC`
-   - Side: `Buy`
-   - Amount: `160` (USDC)
-   - Max slippage: `100` bps
-   - Wallet: any pubkey or leave blank
-3. Click **Prepare nBBO Trade** → calls `POST /realtime/trade/prepare`.
-   - Backend runs: Pyth oracle fetch → DEX aggregation → nBBO selection →
-     risk check → trade persisted as `RealtimeTrade(status=READY)`.
-   - The right column updates the nBBO Snapshot.
-   - A green plan summary card appears under the form with selected DEX,
-     quote price vs oracle price, liquidity, price impact, route latency.
-4. Click any of the three lifecycle buttons (mock execution):
+**Top — Injective Agent Identity (ERC-8004):**
+- Shows our agent's on-chain identity card (Agent ID, builder code, network, MCP
+  endpoint). Without `INJECTIVE_AGENT_ID` it shows a deterministic simulated card; set it
+  to fetch the real on-chain record. Set `INJECTIVE_AGENT_REGISTRY_ENABLED=true` to do a
+  live scan of registered agents (otherwise clearly-labelled samples are shown).
+
+**Market data cards:**
+- **Oracle SOL/USDC** — live Pyth price (mock-friendly via `PYTH_USE_MOCK=true`).
+- **Best Bid / Best Ask / Spread** — aggregated nBBO from the configured DEXes.
+
+**Prepare a trade:**
+1. Pick a pair from the dropdown (Solana pairs: SOL/USDC, BTC/USDC, ETH/USDC; Injective
+   pairs: INJ/USDC, BTC/USDT, ETH/USDT).
+2. Choose **Buy** or **Sell**, enter an amount (USDC) and max slippage (bps).
+3. Click **Prepare nBBO Trade** → the backend runs the full pipeline:
+   Pyth oracle → DEX aggregation → nBBO selection → risk check → trade persisted as
+   `RealtimeTrade(status=READY)`.
+4. A green plan summary card appears with the selected DEX, quote price vs oracle price,
+   liquidity, price impact, and route latency.
+5. Click any lifecycle button to simulate execution:
    - **Mark Submitted** → status `SUBMITTED` + fake tx signature.
    - **Mark Confirmed** → status `CONFIRMED` + records execution price.
    - **Mark Failed** → status `FAILED` with a rejection reason.
-5. Watch the **Trade Event Feed** card stream the lifecycle events as they
-   happen (`trade.intent.received` → `trade.plan.ready` → `trade.confirmed`).
-6. The **Recent Trades** card persists everything to Postgres
-   (`realtime_trade` + `realtime_agent_log` tables) so you can refresh and
-   see the full history.
 
-Optional — verify via curl:
+**Cross-Chain Arbitrage Scanner:**
+- Lists live BTC/ETH spreads across Solana and Injective, net of bridge cost, with the
+  recommended direction (e.g. "Buy on Solana, sell on Injective · deBridge/Peggy").
+
+**Natural-Language Quant Assistant:**
+- Type e.g. *"Find BTC and ETH arbitrage between Solana and Injective"* → click **Ask
+  Agent** → returns a plan via LangChain tools.
+
+**Trade Event Feed & Recent Trades:**
+- The event feed streams lifecycle events (`trade.intent.received` →
+  `trade.plan.ready` → `trade.confirmed`) over WebSocket.
+- Recent trades persist to Postgres so they survive refreshes.
+
+<details>
+<summary>Verify via curl</summary>
 
 ```bash
 curl 'http://localhost:3000/realtime/market/nbbo?pair=SOL/USDC' | jq
 curl -X POST http://localhost:3000/realtime/trade/prepare \
   -H 'content-type: application/json' \
   -d '{"pair":"SOL/USDC","side":"buy","amountIn":"160000000","maxSlippageBps":100}' | jq
-curl 'http://localhost:3000/realtime/trades?limit=5' | jq
+curl 'http://localhost:3000/realtime/cross-chain/arb' | jq
+curl 'http://localhost:3000/agent/identity' | jq
+# MCP tools/list (JSON-RPC over Streamable HTTP)
+curl -X POST http://localhost:3000/mcp \
+  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
+</details>
 
-### Optional power-ups
+---
+
+## ⚡ Optional power-ups
+
+All default off — turn on only what you need.
 
 | Toggle | What it does |
-|--------|--------------|
-| `ENABLE_SCHEDULER=true` (+ Redis on `REDIS_URL`) | BullMQ runs the offline pipeline on a configurable interval (default 1h). |
+|---|---|
+| `ENABLE_SCHEDULER=true` (+ `REDIS_URL`) | BullMQ runs the offline pipeline on a configurable interval (default 1h). |
 | `ENABLE_REAL_DEX=true` (+ `SOLANA_RPC_URL`) | Swap the mock DEX for live Jupiter/Raydium/Orca quotes. |
-| `OPENAI_API_KEY=…` | Replace the mock LLM analysis with real GPT-4 output via LangChain. |
-| `PYTH_HERMES_ENDPOINT=…` | Point at a custom Pyth Hermes endpoint (default is the public one). |
+| `ENABLE_INJECTIVE=true` | Register the Injective Helix adapter + Injective executor (on by default in `.env.example`). |
+| `INJECTIVE_MNEMONIC=…` | Let the spawned Injective MCP server sign real testnet orders (empty → simulated). |
+| `LLM_PROVIDER=deepseek` + `DEEPSEEK_API_KEY` | Replace mock LLM analysis with real DeepSeek output. |
+| `LLM_PROVIDER=openai` + `OPENAI_API_KEY` | Use OpenAI (or an OpenAI-compatible gateway like OpenRouter). |
+| `LLM_PROVIDER=azure` + `AZURE_OPENAI_*` | Use Azure OpenAI (Nova Program credits). |
+| `DECISION_PROVIDER=jev` + `TYPESAFE_API_KEY` | Enable the JEV typed-decision quality gate (start in `shadow` mode). |
+| `USAGE_LEDGER_ENABLED=true` (+ `REDIS_URL`) | Turn on provider-neutral cost controls for Dune/CMC/LLM/JEV. |
+| `INJECTIVE_AGENT_REGISTRY_ENABLED=true` | Live on-chain scan of the Injective Agent Registry. |
+
+---
+
+## 🔧 Key scripts (backend)
+
+From the `backend/` directory:
+
+```bash
+npm run db:generate       # generate Prisma client
+npm run db:push           # sync Prisma schema to the live DB (preferred for demo)
+npm run db:migrate        # apply SQL migrations from supabase/migrations/
+npm run db:reset          # reset DB and re-run all migrations
+npm run start:dev         # NestJS dev server with hot-reload
+npm run test              # Jest unit tests
+npm run test:vitest       # Vitest unit tests (realtime core / nBBO / Pyth)
+npm run test:all          # Jest + Vitest
+npm run test:workflow      # deterministic gather→analyze→decide workflow sim
+npm run build             # nest build
+```
 
 ### Sanity checks
 
 ```bash
-cd backend
-npm run test:all      # Jest (20) + Vitest (3) — should all pass
-npx nest build        # Should complete cleanly
-
-cd ../frontend
-npm run build         # tsc -b && vite build — should complete cleanly
+cd backend && npm run test:all && npx nest build
+cd ../frontend && npm run build
 ```
 
 ---
 
-## 🔧 Key Scripts (Backend)
+## 🌌 Injective integration
 
-From the `backend/` directory:
+This project is being extended for the **Injective Nova Program** (Injective × Microsoft ×
+Web3Labs). The story is **bidirectional**:
+
+- **We consume** the official [Injective MCP server](https://github.com/InjectiveLabs/mcp-server)
+  for execution (Helix market data + MCP signing).
+- **We expose** our own MCP server at `POST /mcp` (Streamable HTTP) with four tools:
+  `query_cross_chain_nbbo`, `propose_arb_plan`, `execute_injective_trade`,
+  `get_agent_identity` — so other Injective agents can discover and call us.
+
+### Injective environment variables
+
+| Env var | Default | Description |
+|---|---|---|
+| `ENABLE_INJECTIVE` | `true` | Register the Helix adapter + Injective executor. |
+| `INJECTIVE_NETWORK` | `testnet` | `testnet` or `mainnet`. |
+| `INJECTIVE_EXCHANGE_API` | `https://api.injective.exchange` | Helix REST base URL. |
+| `INJECTIVE_MCP_BIN` | `npx -y @injectivelabs/mcp-server` | Command to spawn the official MCP server (stdio). |
+| `INJECTIVE_MNEMONIC` | _(empty)_ | Empty → `MockInjectiveTradeExecutor` (simulated tx hashes). Set → real testnet orders. |
+| `INJECTIVE_AGENT_ID` | _(empty)_ | Empty → deterministic simulated identity card. Set → real on-chain record. |
+| `INJECTIVE_AGENT_REGISTRY_ENABLED` | `false` | `true` → live bounded scan of registered agents. |
+| `MCP_PUBLIC_URL` | `http://localhost:3000/mcp` | Public URL declared in our Agent Card services. |
+
+### Run the Injective-enabled demo
+
 ```bash
-npm run db:generate       # Generate Prisma Client
-npm run db:push           # Sync Prisma schema directly to live DB (preferred for demo)
-npm run db:migrate        # Apply SQL migrations from supabase/migrations/
-npm run db:reset          # Reset database and re-run all migrations
-npm run db:status         # Check Supabase status
-npm run supabase:start    # Start Supabase local stack
-npm run supabase:stop     # Stop Supabase local stack
-npm run start:dev         # Start NestJS dev server with hot-reload
-npm run test              # Jest unit tests (NestJS services + gateways)
-npm run test:vitest       # Vitest unit tests (realtime agent core / NBBO / Pyth)
-npm run test:all          # Run both Jest and Vitest
+# Backend with Injective enabled (testnet, simulated execution)
+cd backend
+ENABLE_INJECTIVE=true INJECTIVE_NETWORK=testnet npm run start:dev
+
+# Real signing via the official MCP server (advanced)
+ENABLE_INJECTIVE=true INJECTIVE_NETWORK=testnet \
+INJECTIVE_MNEMONIC="your testnet mnemonic" \
+npm run start:dev
 ```
 
-### Environment Toggles
+With `ENABLE_INJECTIVE=true` and no mnemonic, the Helix adapter fetches **real** Injective
+orderbooks and trades are simulated — safe for demos.
 
-| Env Var                  | Default                                  | Description |
-|--------------------------|------------------------------------------|-------------|
-| `ENABLE_SCHEDULER`       | `false`                                  | Start BullMQ queue on boot (requires Redis). When false, pipeline runs on demand only. |
-| `ENABLE_REAL_DEX`        | `false`                                  | Use real Jupiter/Raydium/Orca adapters. When false, a deterministic mock DEX is used. |
-| `SOLANA_RPC_URL`         | `https://api.mainnet-beta.solana.com`    | RPC endpoint for live DEX adapters. |
-| `PYTH_HERMES_ENDPOINT`   | `https://hermes.pyth.network`            | Pyth Hermes base URL for price feeds. |
-| `MAX_SLIPPAGE_BPS`       | `100`                                    | Risk policy cap for slippage. |
-| `MAX_POSITION_NOTIONAL_USD` | `25000`                               | Risk policy cap for notional position size. |
+---
+
+## 🛠️ Tech stack
+
+| Component | Technologies |
+|---|---|
+| **Backend** | NestJS 10 + TypeScript |
+| **Database** | Supabase / PostgreSQL |
+| **ORM** | Prisma |
+| **LLM** | LangChain (DeepSeek / OpenAI / Azure OpenAI adapters) |
+| **Decision gate** | TypeSafe JEV (typed decision models) |
+| **Job queues** | BullMQ + Redis |
+| **Real-time** | Socket.IO |
+| **Frontend** | Vite + React 18 + TypeScript + Tailwind + Zustand |
+| **Cross-chain** | Injective Helix adapter + Injective MCP server + viem (ERC-8004) |
+
+---
+
+## 🐛 Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `prisma generate` / `db:push` fails | Ensure `npx supabase start` finished; `DATABASE_URL` matches the printed local URL. |
+| Using standalone Postgres, `db:push` errors on `uuid_generate_v4` | Run `CREATE EXTENSION IF NOT EXISTS "uuid-ossp";` in the DB first. |
+| Frontend WS indicators stay red | Backend not up, or `VITE_BACKEND_URL` wrong; check browser console — `/socket.io` must return 200. |
+| No Injective quotes | `ENABLE_INJECTIVE=true`? The Helix adapter hits `https://api.injective.exchange`; outbound HTTPS must be allowed. |
+| LLM returns "mock" text | The selected DeepSeek/OpenAI/Azure adapter has no key; configure its provider-specific credential. |
+| Pyth oracle shows "Waiting for Pyth…" | Set `PYTH_USE_MOCK=true` for a reliable demo (hermes.pyth.network can be TLS-blocked for Node fetch on some networks). |
+| `TS2589` type errors in `cross-chain-agent.service.ts` | Known LangChain+zod inference issue, suppressed with `@ts-ignore`; runtime unaffected. |
 
 ---
 
 ## 📚 Documentation
 
-- [AI Agent Rules & Guidelines](/docs/AGENTS.md)
-- [Codebase Walkthrough](/docs/CODE_WALKTHROUGH.md)
-- [High-level System Architecture](/docs/ARCHITECTURE.md)
-- [Offline Agent Detailed Design](/docs/offline-agent-design.md)
-- [Realtime Agent Detailed Design](/docs/realtime-agent-design.md)
-- [Operator Pending Decisions](/docs/OP_Pending_Items.md)
-- [Project Progress Tracker](/docs/progress-tracker.md)
+- [Manual (run + Azure deploy)](docs/MANUAL.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Code walkthrough](docs/CODE_WALKTHROUGH.md)
+- [AI agent rules](docs/AGENTS.md)
+- [Offline agent design](docs/offline-agent-design.md)
+- [Realtime agent design](docs/realtime-agent-design.md)
+- [Usage ledger design](docs/usage-ledger-design.md)
+- [Usage ledger roadmap](docs/usage-ledger-roadmap.md)
+- [Operator pending decisions](docs/OP_Pending_Items.md)
+- [Progress tracker](docs/progress-tracker.md)
 
 ---
 
-## 🛠️ Tech Stack
+## 📁 Project structure
 
-| Component | Technologies |
-|-----------|--------------|
-| **Backend Framework** | NestJS 10 + TypeScript |
-| **Database** | Supabase/PostgreSQL |
-| **ORM** | Prisma |
-| **LLM Integration** | LangChain with OpenAI-compatible or Azure OpenAI endpoints |
-| **Job Queues** | BullMQ + Redis (local or Upstash) |
-| **Real-time** | Socket.IO |
-| **Frontend** | Vite + React 18 + TypeScript + Tailwind CSS + Zustand + Socket.IO client |
-| **Smart Contracts** | Anchor guardrail prototype |
+```
+sol_trade_agent/
+├── docs/                        # documentation + images
+├── backend/                     # NestJS backend
+│   ├── src/
+│   │   ├── agents/              # LLM adapters + factory
+│   │   ├── crawlers/            # CMC / Dune / TradingView
+│   │   ├── decision/            # JEV quality gate
+│   │   ├── usage-ledger/        # provider-neutral cost controls
+│   │   ├── realtime/            # nBBO + cross-chain agent + MCP server
+│   │   ├── scheduler/           # BullMQ offline pipeline controller
+│   │   ├── config/              # ConfigService + token registry
+│   │   └── prisma/              # Prisma module
+│   ├── prisma/schema.prisma     # database schema
+│   └── .env.example             # all config knobs documented inline
+├── frontend/                    # Vite + React + Tailwind SPA
+│   └── src/pages/               # InsightsPage + LiveTradingPage
+├── supabase/migrations/         # SQL migrations (parallel to Prisma)
+└── docker-compose.yml           # optional local Redis
+```
 
 ---
 
-## 🌌 Injective Integration (Nova Program)
-
-This project is being extended for the **Injective Nova Program** (Injective × Microsoft × Web3Labs) — turning the Solana-only agent into a **Solana ↔ Injective cross-chain AI quant assistant**. It targets the *Agent infrastructure* and *Open innovation* directions.
-
-### Design
-
-The realtime agent is now chain-agnostic: the `DexOrderBookAggregator` fans out to both Solana DEX adapters (Jupiter/Raydium/Orca) **and** an Injective Helix adapter, producing a single cross-chain nBBO. When the winning route lives on Injective, `RealTimeAgentCore` emits an `injectiveExecutionPlan`; a dedicated executor hands it to the official **Injective MCP server** for real signing/broadcast.
-
-```mermaid
-flowchart LR
-    Pyth["Pyth (shared oracle)"] --> Core["RealTimeAgentCore"]
-    Sol["Solana DEX adapters"] --> Agg["Aggregator"]
-    Inj["Injective Helix adapter"] --> Agg
-    Agg --> NBBO["nBBO (cross-chain)"]
-    NBBO --> Core
-    Core -->|chain=solana| SolTx["Jupiter tx (mock)"]
-    Core -->|chain=injective| MCP["Injective MCP Server"]
-    Arb["CrossChainArbStrategy"] --> NL["NL Agent (LangChain tools)"]
-    NL --> MCP
-```
-
-### What was added
-
-| Area | Files |
-|------|-------|
-| Chain abstraction | `backend/src/types.ts` (`DexSource`/`DexQuote.chain`/`TokenPair.chain`), `backend/src/utils/amounts.ts` |
-| Injective token registry | `backend/src/config/tokens.ts` (INJ/USDC/USDT denoms + Helix markets + BTC/ETH perps) |
-| Helix market data | `backend/src/dex/injective-helix-adapter.ts` (REST orderbook → `DexAdapter`) |
-| Shared oracle | `backend/src/oracle/injective-pyth-adapter.ts` (Injective pairs reuse Pyth Hermes) |
-| MCP execution | `backend/src/transactions/injective-mcp-client.ts` (stdio JSON-RPC client + mock executor) |
-| Cross-chain arb | `backend/src/strategy/strategies/cross-chain-arb.strategy.ts` |
-| NL quant assistant | `backend/src/realtime/cross-chain-agent.service.ts` (LangChain `query_cross_chain_nbbo` + `propose_arb_plan` tools) |
-| Agent identity (ERC-8004) | `backend/src/agent/injective-agent-identity.service.ts`, `injective-registry.viem.ts`, `injective-agent-identity.types.ts`, `agent-identity.controller.ts`, `agent-identity.module.ts` |
-| Exposed MCP server | `backend/src/realtime/agent-mcp-server.service.ts`, `agent-mcp.controller.ts` (`POST /mcp`, Streamable HTTP) |
-| Wiring + API | `backend/src/realtime/realtime.service.ts`, `realtime.controller.ts`, `realtime.module.ts` |
-| Frontend | `frontend/src/pages/LiveTradingPage.tsx`, `InsightsPage.tsx`, `lib/api.ts` |
-
-### New REST endpoints
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/realtime/cross-chain/arb` | Scan BTC/ETH spreads across Solana & Injective |
-| `POST` | `/realtime/cross-chain/plan` | Natural-language cross-chain plan via LangChain tools |
-| `POST` | `/realtime/trade/injective-execute` | Execute a prepared Injective plan via the MCP server |
-| `GET` | `/agent/identity` | Our agent's ERC-8004 identity card (real or simulated) |
-| `GET` | `/agent/registry` | Browse the Injective Agent Registry (live scan or samples) |
-| `POST` | `/mcp` | **MCP server endpoint** we expose (Streamable HTTP) — tools below |
-
-### Injective Agent Identity (ERC-8004) + our own MCP server
-
-Beyond *consuming* the official Injective MCP server for execution, the agent now participates in the Injective agent stack as a first-class citizen:
-
-- **On-chain identity** — `backend/src/agent/injective-agent-identity.service.ts` + `injective-registry.viem.ts` talk directly to the canonical Injective Identity Registry (ERC-8004) via `viem` (read-only). Set `INJECTIVE_AGENT_ID` to fetch our agent's real on-chain card; otherwise a deterministic simulated card is returned. Set `INJECTIVE_AGENT_REGISTRY_ENABLED=true` for a live bounded scan of registered agents (falls back to clearly-labelled samples).
-- **Agent Card** — our card declares `services` including our own MCP endpoint (`MCP_PUBLIC_URL`), so the agent is discoverable with capabilities on [agents.injective.com](https://agents.injective.com).
-- **We expose an MCP server** — `backend/src/realtime/agent-mcp-server.service.ts` mounts a standards-compliant MCP endpoint at `POST /mcp` (Streamable HTTP, via `@modelcontextprotocol/sdk`) with four tools:
-  - `query_cross_chain_nbbo` — live nBBO for a pair across Solana + Injective
-  - `propose_arb_plan` — cross-chain arbitrage scan
-  - `execute_injective_trade` — prepare + execute an Injective Helix trade
-  - `get_agent_identity` — our ERC-8004 identity card
-
-This makes the story bidirectional: our agent **calls** the Injective MCP server to trade, **and** is itself an on-chain registered agent that **exposes** an MCP server other agents can call.
-
-### Injective environment variables
-
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `ENABLE_INJECTIVE` | `false` | Register the Helix adapter + Injective executor |
-| `INJECTIVE_NETWORK` | `testnet` | `testnet` or `mainnet` (passed to the MCP server) |
-| `INJECTIVE_EXCHANGE_API` | `https://api.injective.exchange` | Helix public REST base URL |
-| `INJECTIVE_MCP_BIN` | `npx -y @injectivelabs/mcp-server` | Command used to spawn the official MCP server (stdio) |
-| `INJECTIVE_MNEMONIC` | _(empty)_ | Injective account mnemonic for MCP signing. Empty → `MockInjectiveTradeExecutor` (simulated tx hashes) |
-| `INJECTIVE_HELI_MARKETS` | _(empty)_ | Optional overrides, e.g. `INJ/USDC=INJ/USDC:spot,BTC/USDT=BTC/USDT:derivative` |
-
-### LLM provider adapters
-
-The NL quant assistant and offline LLM agent use the same adapter registry in
-`backend/src/agents/`. DeepSeek and OpenAI have separate credentials, endpoints,
-and model defaults even though both use an OpenAI-compatible transport. Azure
-OpenAI remains available for Nova credits.
-
-| Env Var | When | Description |
-|---------|------|-------------|
-| `LLM_PROVIDER` | optional | `deepseek`, `openai`, or `azure`. Auto-detect order: Azure, DeepSeek, OpenAI. |
-| `DEEPSEEK_API_KEY` | DeepSeek | DeepSeek platform API key |
-| `DEEPSEEK_BASE_URL` | DeepSeek | Default `https://api.deepseek.com/v1` |
-| `DEEPSEEK_MODEL` | DeepSeek | Default `deepseek-chat` |
-| `OPENAI_API_KEY` | OpenAI | OpenAI API key |
-| `OPENAI_BASE_URL` | OpenAI | Optional compatible gateway such as OpenRouter |
-| `OPENAI_MODEL` | OpenAI | Default `gpt-4o-mini` |
-| `AZURE_OPENAI_API_KEY` | Azure | Azure OpenAI resource key |
-| `AZURE_OPENAI_API_INSTANCE_NAME` | Azure | Azure resource name |
-| `AZURE_OPENAI_API_DEPLOYMENT_NAME` | Azure | Deployment name (e.g. `gpt-4o-mini`) |
-| `AZURE_OPENAI_API_VERSION` | Azure | API version, default `2024-08-01-preview` |
-| `AZURE_OPENAI_BASE_PATH` | Azure | Optional custom endpoint |
-| `LLM_MODEL` | Any | Optional override for the selected provider model |
-
-When the selected provider has no credentials, both services use deterministic
-demo output. Mock output is not suitable for live trading.
-
-### Typed decision quality gate (JEV)
-
-Typed decision models use a separate `DecisionAdapter` contract because they
-return choices and probabilities rather than generated text. The first adapter
-supports TypeSafe JEV as an offline research quality gate:
-
-```env
-DECISION_PROVIDER="jev"
-TYPESAFE_API_KEY="your_typesafe_key"
-JEV_MODEL="jev-1.13.0"
-JEV_QUALITY_GATE_MODE="shadow"
-```
-
-`shadow` records the decision without suppressing signals. `enforce` only
-persists signals when the gate passes its configured confidence threshold.
-Deterministic strategy generation and risk controls remain authoritative.
-
-Run the deterministic gather → analyze → decide workflow simulation with:
-
-```bash
-cd backend
-npm run test:workflow
-```
-
-`GET /agent/status` reports whether each source and model is live, fallback,
-mocked, or unconfigured without returning credential values.
-
-### Run the Injective-enabled demo
-
-```bash
-# 1. Backend with Injective enabled (testnet, simulated execution)
-cd backend
-ENABLE_INJECTIVE=true INJECTIVE_NETWORK=testnet npm run start:dev
-
-# 2. Real signing via the official MCP server (advanced)
-ENABLE_INJECTIVE=true INJECTIVE_NETWORK=testnet \
-INJECTIVE_MNEMONIC="your testnet mnemonic" \
-npm run start:dev
-
-# 3. Use Nova Azure OpenAI credits for the NL agent
-LLM_PROVIDER=azure \
-AZURE_OPENAI_API_KEY="..." \
-AZURE_OPENAI_API_INSTANCE_NAME="my-resource" \
-AZURE_OPENAI_API_DEPLOYMENT_NAME="gpt-4o-mini" \
-ENABLE_INJECTIVE=true npm run start:dev
-```
-
-With `ENABLE_INJECTIVE=true` and no mnemonic, the Helix adapter fetches **real** Injective orderbooks and trades are simulated by `MockInjectiveTradeExecutor` — safe for demos. Set `INJECTIVE_MNEMONIC` to let the spawned [Injective MCP server](https://github.com/InjectiveLabs/mcp-server) sign and broadcast real testnet orders.
-
-### Nova Program compliance checklist
-
-- [x] Deploys/integrates with Injective (Helix market data + MCP execution)
-- [x] Open-source codebase (this repo)
-- [ ] ≤ 3 minute demo video
-- [ ] Pitch deck
-- [ ] Register at [injectivenova.com](https://injectivenova.com) (recruitment window May 21 – Jun 30)
-- [ ] Attend offline Demo Day (finalists)
+Built for the Solana Frontier Hackathon · Demo build. Not production trading software.
