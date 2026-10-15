@@ -12,6 +12,8 @@ export interface TokenInfo {
   mint?: string;
   /** Injective bank/IBC denom (required for Injective-side execution). */
   denom?: string;
+  /** EVM ERC-20 contract address (required for Monad-side execution). */
+  address?: string;
   decimals: number;
   pythPriceId?: string;
   isStableQuote?: boolean;

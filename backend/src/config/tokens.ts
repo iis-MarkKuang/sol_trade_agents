@@ -61,6 +61,65 @@ export const INJECTIVE_TOKENS = {
 export const TOKENS = { ...SOLANA_TOKENS, ...INJECTIVE_TOKENS };
 
 /**
+ * Monad-side tokens (EVM ERC-20 contract addresses).
+ * Monad is an EVM-compatible L1 (chain id 143 mainnet / 10143 testnet). MON is
+ * the native gas token (no ERC-20 address); wMON is its wrapped ERC-20 form.
+ * USDC/USDT/WBTC/WETH are bridged ERC-20s. Addresses below are TODO placeholders
+ * pending verification against the Monad ecosystem contracts list
+ * (https://docs.monad.xyz/developer-essentials/network-information) and the
+ * protocols repo / MonadVision explorer. Pyth feed ids are reused from the
+ * shared assets (same oracle, same price) — MON/USD feed availability TBD.
+ */
+export const MONAD_TOKENS = {
+  MON: {
+    symbol: "MON",
+    decimals: 18,
+    // TODO: verify MON/USD Pyth feed id on hermes.pyth.network; if absent, the
+    // oracle-deviation gate for MON pairs must be skipped or use a wMON/USDC TWAP.
+    pythPriceId: undefined
+  },
+  WMON: {
+    symbol: "WMON",
+    // TODO: verify wMON ERC-20 address from Monad ecosystem contracts.
+    address: "0xMONAD0000000000000000000000000000000000WMON",
+    decimals: 18,
+    pythPriceId: undefined
+  },
+  USDC: {
+    symbol: "USDC",
+    // TODO: verify bridged USDC (CCTP/deBridge) ERC-20 address on Monad.
+    address: "0xMONAD00000000000000000000000000000000USDC",
+    decimals: 6,
+    pythPriceId: SOLANA_TOKENS.USDC.pythPriceId,
+    isStableQuote: true
+  },
+  USDT: {
+    symbol: "USDT",
+    // TODO: verify bridged USDT ERC-20 address on Monad.
+    address: "0xMONAD00000000000000000000000000000000USDT",
+    decimals: 6,
+    pythPriceId: "0x2b89b9dc8fdf9f34709a5b106b472f0f39bb6ca9ce04b0fd7f2e971688e2e53b",
+    isStableQuote: true
+  },
+  WBTC: {
+    symbol: "WBTC",
+    // TODO: verify bridged WBTC ERC-20 address on Monad.
+    address: "0xMONAD0000000000000000000000000000000WBTC",
+    decimals: 8,
+    pythPriceId: SOLANA_TOKENS.BTC.pythPriceId
+  },
+  WETH: {
+    symbol: "WETH",
+    // TODO: verify bridged WETH ERC-20 address on Monad.
+    address: "0xMONAD000000000000000000000000000000000WETH",
+    decimals: 18,
+    pythPriceId: SOLANA_TOKENS.ETH.pythPriceId
+  }
+} satisfies Record<string, TokenInfo>;
+
+export const TOKENS_ALL = { ...TOKENS, ...MONAD_TOKENS };
+
+/**
  * Default Solana spot pairs (Jupiter/Raydium/Orca).
  */
 export const DEFAULT_PAIRS: Record<string, TokenPair> = {
@@ -91,6 +150,30 @@ export const INJECTIVE_PAIRS: Record<string, TokenPair> = {
 };
 
 /**
+ * Monad DEX pairs. MON spot pair plus WBTC/WETH pairs so the cross-chain arb
+ * strategy has overlapping assets (BTC, ETH) with Solana and Injective. All
+ * pairs carry an explicit `chain: "monad"` tag.
+ */
+export const MONAD_PAIRS: Record<string, TokenPair> = {
+  "MON/USDC": { symbol: "MON/USDC", chain: "monad", base: MONAD_TOKENS.MON, quote: MONAD_TOKENS.USDC },
+  "WBTC/USDC": {
+    symbol: "WBTC/USDC",
+    chain: "monad",
+    // base.symbol is the canonical asset symbol ("BTC") so the cross-chain arb
+    // strategy's pairSymbolForChain("BTC", "monad") matches — mirrors the
+    // Injective BTC/USDT perp which also uses base.symbol "BTC".
+    base: { symbol: "BTC", address: MONAD_TOKENS.WBTC.address, decimals: 8, pythPriceId: MONAD_TOKENS.WBTC.pythPriceId },
+    quote: MONAD_TOKENS.USDC,
+  },
+  "WETH/USDC": {
+    symbol: "WETH/USDC",
+    chain: "monad",
+    base: { symbol: "ETH", address: MONAD_TOKENS.WETH.address, decimals: 18, pythPriceId: MONAD_TOKENS.WETH.pythPriceId },
+    quote: MONAD_TOKENS.USDC,
+  }
+};
+
+/**
  * Helix market tickers keyed by pair symbol. The InjectiveHelixAdapter maps a
  * TokenPair to its exchange market id via this registry.
  */
@@ -102,7 +185,11 @@ export const INJECTIVE_HELIX_MARKETS: Record<string, { marketId: string; type: "
 };
 
 /** Merged registry of all supported pairs across chains. */
-export const ALL_PAIRS: Record<string, TokenPair> = { ...DEFAULT_PAIRS, ...INJECTIVE_PAIRS };
+export const ALL_PAIRS: Record<string, TokenPair> = {
+  ...DEFAULT_PAIRS,
+  ...INJECTIVE_PAIRS,
+  ...MONAD_PAIRS,
+};
 
 export function chainOfPair(pair: TokenPair): ChainId {
   if (pair.chain) {
@@ -110,6 +197,9 @@ export function chainOfPair(pair: TokenPair): ChainId {
   }
   if (pair.base.denom && !pair.base.mint) {
     return "injective";
+  }
+  if (pair.base.address && !pair.base.mint && !pair.base.denom) {
+    return "monad";
   }
   return "solana";
 }
