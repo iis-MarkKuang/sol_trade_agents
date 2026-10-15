@@ -17,18 +17,19 @@ export function inputOutputForSide(pair: TokenPair, side: QuoteSide): {
   inputDecimals: number;
   outputDecimals: number;
 } {
+  const idOf = (t: TokenInfo) => t.mint ?? t.denom ?? t.address ?? t.symbol;
   if (side === "bid") {
     return {
-      inputMint: pair.base.mint ?? pair.base.denom ?? pair.base.symbol,
-      outputMint: pair.quote.mint ?? pair.quote.denom ?? pair.quote.symbol,
+      inputMint: idOf(pair.base),
+      outputMint: idOf(pair.quote),
       inputDecimals: pair.base.decimals,
       outputDecimals: pair.quote.decimals
     };
   }
 
   return {
-    inputMint: pair.quote.mint ?? pair.quote.denom ?? pair.quote.symbol,
-    outputMint: pair.base.mint ?? pair.base.denom ?? pair.base.symbol,
+    inputMint: idOf(pair.quote),
+    outputMint: idOf(pair.base),
     inputDecimals: pair.quote.decimals,
     outputDecimals: pair.base.decimals
   };
