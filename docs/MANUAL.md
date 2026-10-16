@@ -241,8 +241,10 @@ Before enabling real signing in any non-demo environment, clear these gates (see
 1. **Pyth MON feed** — confirm a published Pyth price feed id for the Monad-native assets.
 2. **Paid Monad RPC** — provision a paid/mainnet `MONAD_RPC_URL`.
 3. **0x / 1inch API key** — obtain `MONAD_AGGREGATOR_API_KEY` if using aggregator mode.
-4. **Verified ERC-20 addresses** — replace the `0xMONAD...` placeholders in
-   `backend/src/config/tokens.ts` `MONAD_TOKENS` with real on-chain contract addresses.
+4. **Verified ERC-20 addresses** — `WMON` is verified
+   (`0x32d31642963c202C68724beA3A8dEceb735fca23`); replace the remaining
+   `0xMONAD...` placeholders in `backend/src/config/tokens.ts` `MONAD_TOKENS`
+   (USDC/USDT/WBTC/WETH) with real on-chain contract addresses.
    **Do not enable `MONAD_DEX_MODE=aggregator` or set a real key until these are verified.**
 5. **Funded signer** — fund the EVM address from `MONAD_PRIVATE_KEY` with MON for gas.
 

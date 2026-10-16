@@ -351,10 +351,12 @@ widens to **Solana ↔ Injective ↔ Monad** (N-chain pairwise scan). Execute a 
 via the **Execute on Monad (viem)** button or `POST /realtime/trade/monad-execute`.
 
 > ⚠️ The `MONAD_TOKENS` ERC-20 contract addresses in `backend/src/config/tokens.ts`
-> are **TODO placeholders** (`0xMONAD...USDC` etc.) pending verification against the
-> live Monad ecosystem contracts. Mock mode bypasses them; **do not enable
-> `MONAD_DEX_MODE=aggregator` or set a real `MONAD_PRIVATE_KEY` until those addresses
-> are verified** — a real signature against a wrong ERC-20 could lose funds.
+> are **partially verified**: `WMON` (`0x32d31642963c202C68724beA3A8dEceb735fca23`) is
+> confirmed, while `USDC`/`USDT`/`WBTC`/`WETH` remain **TODO placeholders**
+> (`0xMONAD...`) pending verification against the live Monad ecosystem contracts.
+> Mock mode bypasses them; **do not enable `MONAD_DEX_MODE=aggregator` or set a real
+> `MONAD_PRIVATE_KEY` until those addresses are verified** — a real signature
+> against a wrong ERC-20 could lose funds.
 
 ### OP decision gates to turn on real Monad execution
 
@@ -367,8 +369,10 @@ operator must clear these gates (tracked in `docs/monad-integration-roadmap.md`)
    rate-limit at demo volumes.
 3. **0x / 1inch API key** — obtain `MONAD_AGGREGATOR_API_KEY` if you switch
    `MONAD_DEX_MODE=aggregator`; the free tier is demo-only.
-4. **Verified ERC-20 addresses** — replace every `0xMONAD...` placeholder in
-   `MONAD_TOKENS` with the real on-chain contract addresses.
+4. **Verified ERC-20 addresses** — `WMON` is verified
+   (`0x32d31642963c202C68724beA3A8dEceb735fca23`); replace the remaining
+   `0xMONAD...` placeholders in `MONAD_TOKENS` (USDC/USDT/WBTC/WETH) with real
+   on-chain contract addresses.
 5. **Funded signer** — fund the EVM address derived from `MONAD_PRIVATE_KEY` with enough
    MON for gas; testnet faucet is free, mainnet is not.
 

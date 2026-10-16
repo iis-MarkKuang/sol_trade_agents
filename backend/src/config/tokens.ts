@@ -80,8 +80,8 @@ export const MONAD_TOKENS = {
   },
   WMON: {
     symbol: "WMON",
-    // TODO: verify wMON ERC-20 address from Monad ecosystem contracts.
-    address: "0xMONAD0000000000000000000000000000000000WMON",
+    // Verified wMON (wrapped MON) ERC-20 address on Monad mainnet.
+    address: "0x32d31642963c202C68724beA3A8dEceb735fca23",
     decimals: 18,
     pythPriceId: undefined
   },
