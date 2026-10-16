@@ -33,10 +33,18 @@ import {
   type InjectiveTradeExecutor,
   type InjectiveTradeResult,
 } from '../transactions/injective-mcp-client.js';
+import {
+  MonadViemExecutor,
+  MockMonadTradeExecutor,
+  type MonadTradeExecutor,
+  type MonadTradeResult,
+} from '../transactions/monad-executor.js';
+import { MonadDexAdapter } from '../dex/monad-dex-adapter.js';
 import type {
   AggregatedOrderBook,
   DexQuoteRequest,
   InjectiveExecutionPlan,
+  MonadExecutionPlan,
   NbboSnapshot,
   PriceUpdate,
   RiskPolicy,
@@ -77,6 +85,9 @@ const REFERENCE_USD: Record<string, number> = {
 
 /** Deterministic Injective premium (bps) so the cross-chain nBBO + arb scan stay meaningful in mock mode. */
 const INJECTIVE_MOCK_OFFSET_BPS = 60;
+
+/** Deterministic Monad premium (bps) for the mock nBBO path. */
+const MONAD_MOCK_OFFSET_BPS = 30;
 
 function referencePriceFor(pair: TokenPair): number {
   return REFERENCE_USD[pair.base.symbol] ?? 100;
@@ -137,6 +148,7 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
   private priceSubscription?: PriceFeedSubscription;
   private policy!: RiskPolicy;
   private injectiveExecutor?: InjectiveTradeExecutor;
+  private monadExecutor?: MonadTradeExecutor;
   private readonly disposables: Array<() => unknown> = [];
   private readonly priceCache = new Map<string, PriceUpdate>();
 
@@ -150,11 +162,15 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     const cfg = this.configService.realtime;
     const injCfg = this.configService.injective;
+    const monCfg = this.configService.monad;
     const allowedDexes: RiskPolicy['allowedDexes'] = cfg.enableRealDex
       ? ['jupiter', 'raydium', 'orca', 'mock']
       : ['mock'];
     if (injCfg.enabled) {
       allowedDexes.push('injective_helix');
+    }
+    if (monCfg.enabled) {
+      allowedDexes.push('monad_dex');
     }
 
     this.policy = {
@@ -215,6 +231,11 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       this.injectiveExecutor = this.buildInjectiveExecutor();
     }
 
+    if (monCfg.enabled) {
+      adapters.push(this.buildMonadAdapter());
+      this.monadExecutor = this.buildMonadExecutor();
+    }
+
     this.aggregator = new DexOrderBookAggregator(adapters, {
       quoteTimeoutMs: cfg.dexQuoteTimeoutMs,
     });
@@ -230,12 +251,13 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
         ? new JupiterTransactionBuilder({ apiKey: cfg.jupiterApiKey })
         : undefined,
       injectiveExecutor: this.injectiveExecutor,
+      monadExecutor: this.monadExecutor,
       retries: cfg.retries,
     });
 
     this.subscribePythBroadcast();
     this.logger.log(
-      `Realtime agent initialised (realDex=${cfg.enableRealDex}, injective=${injCfg.enabled}, pairs=${Object.keys(
+      `Realtime agent initialised (realDex=${cfg.enableRealDex}, injective=${injCfg.enabled}, monad=${monCfg.enabled}, pairs=${Object.keys(
         ALL_PAIRS,
       ).join(',')})`,
     );
@@ -420,7 +442,9 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       const mid =
         pair.chain === 'injective'
           ? refMid * (1 + INJECTIVE_MOCK_OFFSET_BPS / 10_000)
-          : refMid;
+          : pair.chain === 'monad'
+            ? refMid * (1 + MONAD_MOCK_OFFSET_BPS / 10_000)
+            : refMid;
       const aggregator = new DexOrderBookAggregator([
         new MockDexAdapter({
           source: 'mock',
@@ -534,6 +558,35 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     return new MockInjectiveTradeExecutor();
   }
 
+  private buildMonadAdapter(): MonadDexAdapter {
+    const monCfg = this.configService.monad;
+    return new MonadDexAdapter({
+      mode: monCfg.dexMode,
+      rpcUrl: monCfg.rpcUrl,
+      zeroxApiKey: monCfg.zeroxApiKey,
+      oneinchApiKey: monCfg.oneinchApiKey,
+      getMidPrice: (symbol) => this.priceCache.get(symbol)?.price,
+      mockPremiumBps: monCfg.mockPremiumBps,
+    });
+  }
+
+  private buildMonadExecutor(): MonadTradeExecutor {
+    const monCfg = this.configService.monad;
+    if (monCfg.privateKey) {
+      const exec = new MonadViemExecutor({
+        rpcUrl: monCfg.rpcUrl,
+        network: monCfg.network,
+        privateKey: monCfg.privateKey,
+      });
+      this.disposables.push(() => void exec.onModuleDestroy());
+      return exec;
+    }
+    this.logger.warn(
+      'MONAD_PRIVATE_KEY not set — using MockMonadTradeExecutor (no real signing)',
+    );
+    return new MockMonadTradeExecutor();
+  }
+
   /**
    * Execute a previously-prepared Injective trade plan via the MCP server.
    * Signing is explicit (not done in prepareTrade) so the user keeps final say.
@@ -556,6 +609,43 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
 
     const result = await this.injectiveExecutor.executeTrade({
       plan: plan.injectiveExecutionPlan,
+      intent: plan.intent,
+      options: input.options,
+    });
+
+    await this.confirmExecution({
+      tradeId: input.tradeId,
+      status: result.status === 'failed' ? 'FAILED' : result.status === 'confirmed' ? 'CONFIRMED' : 'SUBMITTED',
+      txSignature: result.txHash,
+      executionPrice: plan.selectedRoute?.quote.price,
+      message: result.message,
+    });
+
+    return result;
+  }
+
+  /**
+   * Execute a previously-prepared Monad trade plan via the viem signer.
+   * Signing is explicit (not done in prepareTrade) so the user keeps final say.
+   */
+  async executeMonadTrade(input: {
+    tradeId: string;
+    options?: Record<string, unknown>;
+  }): Promise<MonadTradeResult> {
+    if (!this.monadExecutor) {
+      throw new Error('Monad execution is not enabled (set ENABLE_MONAD=true)');
+    }
+    const trade = await this.tradeRepo.findById(input.tradeId);
+    if (!trade || !trade.plan) {
+      throw new Error(`Trade ${input.tradeId} not found or has no plan`);
+    }
+    const plan = trade.plan as unknown as TradeExecutionPlan;
+    if (!plan.monadExecutionPlan) {
+      throw new Error(`Trade ${input.tradeId} has no Monad execution plan`);
+    }
+
+    const result = await this.monadExecutor.executeTrade({
+      plan: plan.monadExecutionPlan,
       intent: plan.intent,
       options: input.options,
     });

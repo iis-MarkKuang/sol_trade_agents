@@ -35,6 +35,16 @@ class StubConfigService {
     mnemonic: undefined,
     helixMarkets: undefined,
   };
+  monad = {
+    enabled: false,
+    network: 'mainnet' as const,
+    rpcUrl: 'https://rpc.monad.xyz',
+    privateKey: undefined,
+    dexMode: 'mock' as const,
+    zeroxApiKey: undefined,
+    oneinchApiKey: undefined,
+    mockPremiumBps: 30,
+  };
 }
 
 class StubTradeRepository {
@@ -267,5 +277,55 @@ describe('RealtimeService', () => {
 
     const eventTypes = gateway.tradeEvents.map((event) => event.type);
     expect(eventTypes).toContain('trade.confirmed');
+  });
+});
+
+describe('RealtimeService Monad wiring', () => {
+  function makeService(monadEnabled: boolean) {
+    const stub = new StubConfigService();
+    stub.monad.enabled = monadEnabled;
+    // StubConfigService is a plain class; assign the monad override onto the instance.
+    return { stub };
+  }
+
+  it('excludes monad_dex from allowedDexes when ENABLE_MONAD=false', async () => {
+    const { stub } = makeService(false);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RealtimeService,
+        CrossChainArbStrategy,
+        { provide: ConfigService, useValue: stub },
+        { provide: RealtimeTradeRepository, useClass: StubTradeRepository },
+        { provide: RealtimeGateway, useClass: StubGateway },
+      ],
+    }).compile();
+    const service = module.get<RealtimeService>(RealtimeService);
+    await service.onModuleInit();
+
+    const policy = service.getPolicy();
+    expect(policy.allowedDexes).not.toContain('monad_dex');
+    expect((service as any).monadExecutor).toBeUndefined();
+  });
+
+  it('includes monad_dex + a mock executor when ENABLE_MONAD=true (no key)', async () => {
+    const { stub } = makeService(true);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RealtimeService,
+        CrossChainArbStrategy,
+        { provide: ConfigService, useValue: stub },
+        { provide: RealtimeTradeRepository, useClass: StubTradeRepository },
+        { provide: RealtimeGateway, useClass: StubGateway },
+      ],
+    }).compile();
+    const service = module.get<RealtimeService>(RealtimeService);
+    await service.onModuleInit();
+
+    const policy = service.getPolicy();
+    expect(policy.allowedDexes).toContain('monad_dex');
+    expect((service as any).monadExecutor).toBeDefined();
+    // No private key -> mock executor
+    const isAvailable = await (service as any).monadExecutor.isAvailable();
+    expect(isAvailable).toBe(true);
   });
 });

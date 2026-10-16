@@ -6,6 +6,7 @@ import { RiskEngine, TradeIntentSchema } from "../risk/risk-engine.js";
 import type {
   DexQuote,
   InjectiveExecutionPlan,
+  MonadExecutionPlan,
   RiskPolicy,
   TokenPair,
   TradeExecutionPlan,
@@ -15,6 +16,7 @@ import { amountToDecimal, applyBps } from "../utils/amounts.js";
 import { withRetry } from "../utils/async.js";
 import type { JupiterTransactionBuilder } from "../transactions/jupiter-transaction-builder.js";
 import type { InjectiveTradeExecutor } from "../transactions/injective-mcp-client.js";
+import type { MonadTradeExecutor } from "../transactions/monad-executor.js";
 
 export interface RealTimeAgentCoreConfig {
   priceFeed: PriceFeedReader;
@@ -25,6 +27,7 @@ export interface RealTimeAgentCoreConfig {
   tokenPairs?: Record<string, TokenPair>;
   txBuilder?: JupiterTransactionBuilder;
   injectiveExecutor?: InjectiveTradeExecutor;
+  monadExecutor?: MonadTradeExecutor;
   retries?: number;
 }
 
@@ -84,6 +87,8 @@ export class RealTimeAgentCore {
 
     if (chain === "injective") {
       plan.injectiveExecutionPlan = this.buildInjectivePlan(pair, intent, selectedRoute.quote, oraclePrice.price);
+    } else if (chain === "monad") {
+      plan.monadExecutionPlan = this.buildMonadPlan(pair, intent, selectedRoute.quote, oraclePrice.price);
     } else if (
       intent.user &&
       selectedRoute.quote.source === "jupiter" &&
@@ -120,6 +125,34 @@ export class RealTimeAgentCore {
       price: quote.price,
       notionalUsd,
       reason: `Injective Helix ${marketType} ${marketId} ${intent.side} via MCP`
+    };
+  }
+
+  private buildMonadPlan(
+    pair: TokenPair,
+    intent: TradeIntent,
+    quote: DexQuote,
+    oraclePrice: number
+  ): MonadExecutionPlan {
+    const raw = quote.raw as { dex?: MonadExecutionPlan["dex"] } | undefined;
+    const dex = raw?.dex ?? "0x";
+    const notionalUsd =
+      intent.side === "buy"
+        ? amountToDecimal(intent.amountIn, pair.quote.decimals).toNumber()
+        : amountToDecimal(intent.amountIn, pair.base.decimals).mul(oraclePrice).toNumber();
+
+    return {
+      chainId: 143,
+      dex,
+      tokenIn: quote.inputMint,
+      tokenOut: quote.outputMint,
+      side: intent.side,
+      amountIn: intent.amountIn.toString(),
+      minAmountOut: "0",
+      to: intent.user ?? pair.base.address ?? pair.base.symbol,
+      deadline: Math.floor(Date.now() / 1000) + 600,
+      notionalUsd,
+      reason: `Monad ${dex} ${pair.symbol} ${intent.side} via viem`
     };
   }
 }

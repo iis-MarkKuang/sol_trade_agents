@@ -102,6 +102,26 @@ export class RealtimeController {
     }
   }
 
+  @Post('trade/monad-execute')
+  async executeMonadTrade(@Body() body: unknown) {
+    const input =
+      body && typeof body === 'object' ? (body as { tradeId?: string; options?: Record<string, unknown> }) : {};
+    if (!input.tradeId) {
+      throw new BadRequestException('tradeId is required');
+    }
+    try {
+      const result = await this.realtime.executeMonadTrade({
+        tradeId: input.tradeId,
+        options: input.options,
+      });
+      return safe(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`monad-execute failed: ${message}`);
+      throw new BadRequestException(message);
+    }
+  }
+
   @Get('trades')
   async listTrades(@Query('limit') limit?: string) {
     const numericLimit = limit ? Math.min(Math.max(Number(limit) || 50, 1), 200) : 50;
