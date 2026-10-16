@@ -42,6 +42,7 @@ import {
 import { MonadDexAdapter } from '../dex/monad-dex-adapter.js';
 import type {
   AggregatedOrderBook,
+  ChainId,
   DexQuoteRequest,
   InjectiveExecutionPlan,
   MonadExecutionPlan,
@@ -494,10 +495,13 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
     snapshots: Record<string, NbboSnapshot>;
   }> {
     const assets = options.assets ?? ['BTC', 'ETH'];
+    const chains: ChainId[] = options.chains ?? (this.configService.monad.enabled
+      ? ['solana', 'injective', 'monad']
+      : ['solana', 'injective']);
     const snapshots: Record<string, NbboSnapshot> = {};
 
     for (const asset of assets) {
-      for (const chain of ['solana', 'injective'] as const) {
+      for (const chain of chains) {
         const symbol = pairSymbolForChain(asset, chain);
         if (!symbol) continue;
         if (snapshots[symbol]) continue;
@@ -509,7 +513,7 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const signals = this.arbStrategy.detectArb(snapshots, options);
+    const signals = this.arbStrategy.detectArb(snapshots, { ...options, chains });
     return { signals, snapshots };
   }
 

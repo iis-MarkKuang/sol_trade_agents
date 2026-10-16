@@ -196,7 +196,7 @@ User request: {prompt}`,
     }
     const lines = signals.map(
       (s) =>
-        `- ${s.asset}: buy on ${s.buyChain} @ ${s.buyChain === 'solana' ? s.solanaMid : s.injectiveMid}, sell on ${s.sellChain}; spread ${s.spreadBps.toFixed(1)} bps, net ${s.netEdgeBps.toFixed(1)} bps after ${s.bridgeCostBps} bps bridge. Path: ${s.bridgePath}`,
+        `- ${s.asset}: buy on ${s.buyChain} @ ${s.buyMid}, sell on ${s.sellChain}; spread ${s.spreadBps.toFixed(1)} bps, net ${s.netEdgeBps.toFixed(1)} bps after ${s.bridgeCostBps} bps bridge. Path: ${s.bridgePath}`,
     );
     return `Cross-chain plan for "${prompt}":\n${lines.join('\n')}`;
   }
