@@ -82,7 +82,7 @@ export interface NbboSnapshot {
 
 export interface NbboQuote {
   source: string;
-  chain?: "solana" | "injective";
+  chain?: "solana" | "injective" | "monad";
   side: "bid" | "ask";
   pair: string;
   price: number;
@@ -133,6 +133,20 @@ export interface InjectiveExecutionPlan {
   reason: string;
 }
 
+export interface MonadExecutionPlan {
+  chainId: number;
+  dex: "uniswap_v3" | "0x" | "1inch" | "monorail" | "mock";
+  tokenIn: string;
+  tokenOut: string;
+  side: "buy" | "sell";
+  amountIn: string;
+  minAmountOut: string;
+  to: string;
+  deadline: number;
+  notionalUsd: number;
+  reason: string;
+}
+
 export interface PreparedTradeResponse {
   tradeId: string;
   plan: {
@@ -143,20 +157,25 @@ export interface PreparedTradeResponse {
     nbbo: NbboSnapshot;
     oraclePrice: { price: number; confidenceBps: number; isStale: boolean; publishTime: number };
     injectiveExecutionPlan?: InjectiveExecutionPlan;
+    monadExecutionPlan?: MonadExecutionPlan;
   };
 }
 
 export interface CrossChainArbSignal {
   asset: string;
-  solanaPair: string;
-  injectivePair: string;
-  solanaMid: number;
-  injectiveMid: number;
+  /** Set when Solana is one of the two legs. */
+  solanaPair?: string;
+  /** Set when Injective is one of the two legs. */
+  injectivePair?: string;
+  buyPair: string;
+  sellPair: string;
+  buyMid: number;
+  sellMid: number;
   spreadBps: number;
   bridgeCostBps: number;
   netEdgeBps: number;
-  buyChain: "solana" | "injective";
-  sellChain: "solana" | "injective";
+  buyChain: "solana" | "injective" | "monad";
+  sellChain: "solana" | "injective" | "monad";
   action: "buy" | "sell";
   confidence: number;
   reason: string;
@@ -182,6 +201,13 @@ export interface CrossChainPlanResponse {
 export interface InjectiveExecuteResponse {
   txHash?: string;
   orderHash?: string;
+  status: "submitted" | "confirmed" | "failed" | "simulated";
+  message: string;
+  raw?: unknown;
+}
+
+export interface MonadExecuteResponse {
+  txHash?: string;
   status: "submitted" | "confirmed" | "failed" | "simulated";
   message: string;
   raw?: unknown;
@@ -292,6 +318,8 @@ export const realtimeApi = {
     api.post<{ ok: true }>("/realtime/trade/confirm", payload),
   executeInjective: (tradeId: string) =>
     api.post<InjectiveExecuteResponse>("/realtime/trade/injective-execute", { tradeId }),
+  executeMonad: (tradeId: string) =>
+    api.post<MonadExecuteResponse>("/realtime/trade/monad-execute", { tradeId }),
   trades: (limit = 25) => api.get<TradeRecord[]>(`/realtime/trades?limit=${limit}`),
   trade: (id: string) => api.get<TradeRecord>(`/realtime/trades/${id}`),
   crossChainArb: (params: { notionalUsd?: number; minNetEdgeBps?: number; assets?: string }) =>

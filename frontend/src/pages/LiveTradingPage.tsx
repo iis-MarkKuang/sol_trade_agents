@@ -27,11 +27,14 @@ const PAIRS = [
   { symbol: "INJ/USDC", chain: "injective" as const },
   { symbol: "INJ/USDT", chain: "injective" as const },
   { symbol: "BTC/USDT", chain: "injective" as const },
-  { symbol: "ETH/USDT", chain: "injective" as const }
+  { symbol: "ETH/USDT", chain: "injective" as const },
+  { symbol: "MON/USDC", chain: "monad" as const },
+  { symbol: "WBTC/USDC", chain: "monad" as const },
+  { symbol: "WETH/USDC", chain: "monad" as const }
 ];
 
 const PAIR_SYMBOLS = PAIRS.map((p) => p.symbol);
-const CHAIN_BY_PAIR: Record<string, "solana" | "injective"> = Object.fromEntries(
+const CHAIN_BY_PAIR: Record<string, "solana" | "injective" | "monad"> = Object.fromEntries(
   PAIRS.map((p) => [p.symbol, p.chain])
 );
 
@@ -53,6 +56,7 @@ export function LiveTradingPage() {
   const [nlPlan, setNlPlan] = useState<CrossChainPlanResponse | null>(null);
   const [nlLoading, setNlLoading] = useState(false);
   const [injectiveExecuting, setInjectiveExecuting] = useState(false);
+  const [monadExecuting, setMonadExecuting] = useState(false);
   const [identity, setIdentity] = useState<AgentIdentity | null>(null);
   const [registry, setRegistry] = useState<RegistryList | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
@@ -227,6 +231,21 @@ export function LiveTradingPage() {
     }
   };
 
+  const handleMonadExecute = async () => {
+    if (!lastPrepared?.plan.monadExecutionPlan) return;
+    setMonadExecuting(true);
+    setError(null);
+    try {
+      await realtimeApi.executeMonad(lastPrepared.tradeId);
+      await refreshTrades();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(extractApiMessage(message, err));
+    } finally {
+      setMonadExecuting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <AgentIdentitySection
@@ -274,7 +293,12 @@ export function LiveTradingPage() {
                 <select className="select" value={pair} onChange={(e) => setPair(e.target.value)}>
                   {PAIRS.map((p) => (
                     <option key={p.symbol} value={p.symbol}>
-                      {p.symbol} · {p.chain === "injective" ? "Injective Helix" : "Solana DEX"}
+                      {p.symbol} ·{" "}
+                      {p.chain === "injective"
+                        ? "Injective Helix"
+                        : p.chain === "monad"
+                          ? "Monad DEX"
+                          : "Solana DEX"}
                     </option>
                   ))}
                 </select>
@@ -365,6 +389,8 @@ export function LiveTradingPage() {
               confirming={confirming}
               onInjectiveExecute={handleInjectiveExecute}
               injectiveExecuting={injectiveExecuting}
+              onMonadExecute={handleMonadExecute}
+              monadExecuting={monadExecuting}
             />
           )}
         </section>
@@ -424,11 +450,11 @@ export function LiveTradingPage() {
         <section className="card">
           <SectionHeader
             title="Cross-Chain Arbitrage Scanner"
-            subtitle="Solana ↔ Injective spread detection (BTC, ETH)"
+            subtitle="Solana ↔ Injective ↔ Monad spread detection (BTC, ETH)"
           />
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs text-slate-400">
-              Scans shared assets across both chains and flags net edge after bridge cost.
+              Scans shared assets across chains and flags net edge after bridge cost.
             </p>
             <button onClick={refreshArb} className="btn-secondary text-xs" disabled={arbLoading}>
               {arbLoading ? "Scanning…" : "Rescan"}
@@ -440,7 +466,7 @@ export function LiveTradingPage() {
             <ul className="space-y-2">
               {arbSignals.map((s) => (
                 <li
-                  key={s.asset}
+                  key={`${s.asset}-${s.buyChain}-${s.sellChain}`}
                   className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-3 text-sm"
                 >
                   <div className="flex items-center justify-between">
@@ -450,8 +476,8 @@ export function LiveTradingPage() {
                     </span>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
-                    <Stat label="Solana mid" value={formatUsd(s.solanaMid)} />
-                    <Stat label="Injective mid" value={formatUsd(s.injectiveMid)} />
+                    <Stat label={`${chainLabel(s.buyChain)} mid`} value={formatUsd(s.buyMid)} />
+                    <Stat label={`${chainLabel(s.sellChain)} mid`} value={formatUsd(s.sellMid)} />
                     <Stat label="Spread" value={formatBps(s.spreadBps)} />
                     <Stat label="Bridge cost" value={formatBps(s.bridgeCostBps)} />
                   </div>
@@ -712,17 +738,22 @@ function PreparedSummary({
   onConfirm,
   confirming,
   onInjectiveExecute,
-  injectiveExecuting
+  injectiveExecuting,
+  onMonadExecute,
+  monadExecuting
 }: {
   prepared: PreparedTradeResponse;
   onConfirm: (status: "SUBMITTED" | "CONFIRMED" | "FAILED") => void;
   confirming: boolean;
   onInjectiveExecute: () => void;
   injectiveExecuting: boolean;
+  onMonadExecute: () => void;
+  monadExecuting: boolean;
 }) {
   const route = prepared.plan.selectedRoute?.quote;
   const oracle = prepared.plan.oraclePrice;
   const injPlan = prepared.plan.injectiveExecutionPlan;
+  const monPlan = prepared.plan.monadExecutionPlan;
   return (
     <div className="mt-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm">
       <div className="flex items-center justify-between">
@@ -766,6 +797,28 @@ function PreparedSummary({
             className="btn mt-3 w-full bg-indigo-500/20 text-indigo-100 ring-1 ring-indigo-500/40 text-xs"
           >
             {injectiveExecuting ? "Submitting via MCP…" : "Execute on Injective (MCP)"}
+          </button>
+        </div>
+      )}
+
+      {monPlan && (
+        <div className="mt-3 rounded-lg border border-purple-500/30 bg-purple-500/10 p-3 text-xs text-slate-200">
+          <p className="mb-1 font-semibold text-purple-200">
+            Monad execution plan (via viem)
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Stat label="DEX" value={monPlan.dex} />
+            <Stat label="Chain id" value={String(monPlan.chainId)} />
+            <Stat label="Side" value={monPlan.side.toUpperCase()} />
+            <Stat label="Notional" value={formatCompactUsd(monPlan.notionalUsd)} />
+          </div>
+          <p className="mt-2 text-slate-400">{monPlan.reason}</p>
+          <button
+            onClick={onMonadExecute}
+            disabled={monadExecuting}
+            className="btn mt-3 w-full bg-purple-500/20 text-purple-100 ring-1 ring-purple-500/40 text-xs"
+          >
+            {monadExecuting ? "Submitting via viem…" : "Execute on Monad (viem)"}
           </button>
         </div>
       )}
@@ -918,16 +971,17 @@ function baseToken(pair: string): string {
   return pair.split("/")[0];
 }
 
-function chainLabel(chain?: "solana" | "injective"): string {
+function chainLabel(chain?: "solana" | "injective" | "monad"): string {
   if (chain === "injective") return "Injective";
   if (chain === "solana") return "Solana";
+  if (chain === "monad") return "Monad";
   return "—";
 }
 
-function ChainBadge({ chain }: { chain?: "solana" | "injective" }) {
+function ChainBadge({ chain }: { chain?: "solana" | "injective" | "monad" }) {
   if (!chain) return null;
   const klass =
-    chain === "injective" ? "badge-blue" : "badge-slate";
+    chain === "injective" ? "badge-blue" : chain === "monad" ? "badge-purple" : "badge-slate";
   return <span className={klass}>{chainLabel(chain)}</span>;
 }
 
