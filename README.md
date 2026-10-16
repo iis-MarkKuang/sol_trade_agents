@@ -314,6 +314,68 @@ orderbooks and trades are simulated — safe for demos.
 
 ---
 
+## 🟣 Monad integration (experimental)
+
+The agent also supports the **Monad** chain — an EVM-compatible L1 (chain ID `143`,
+mainnet live since 2025-11-24, ~10k TPS). The integration is fully additive and gated
+behind `ENABLE_MONAD` (default `false`), so the app behaves identically to before when the
+flag is off. See `docs/monad-integration-research.md` for the full design and
+`docs/monad-integration-roadmap.md` for the ticket-by-ticket implementation plan.
+
+### Monad environment variables
+
+| Env var | Default | Description |
+|---|---|---|
+| `ENABLE_MONAD` | `false` | Register the Monad DEX adapter + viem executor. Off → no behavior change. |
+| `MONAD_RPC_URL` | _(empty)_ | Monad JSON-RPC endpoint. Empty → mock mode (no network calls). |
+| `MONAD_CHAIN_ID` | `143` | Monad mainnet chain id. Use `10143` for testnet. |
+| `MONAD_DEX_MODE` | `mock` | `mock` → deterministic quotes tracking Pyth mid + premium; `aggregator` → 0x/1inch API. |
+| `MONAD_AGGREGATOR` | `0x` | `0x` or `1inch` when `MONAD_DEX_MODE=aggregator`. |
+| `MONAD_AGGREGATOR_API_KEY` | _(empty)_ | Required only for 0x Pro / 1inch API in non-demo environments. |
+| `MONAD_PRIVATE_KEY` | _(empty)_ | EVM private key for `MonadViemExecutor`. Empty → `MockMonadTradeExecutor` (simulated hashes). **Keep in `.env` only — never commit.** |
+| `MONAD_MOCK_OFFSET_BPS` | `30` | Premium (bps) the mock adapter adds over the Pyth mid, used in the nBBO path. |
+
+### Run the Monad-enabled demo (zero keys)
+
+```bash
+cd backend
+ENABLE_MONAD=true MONAD_DEX_MODE=mock MONAD_PRIVATE_KEY="" npm run start:dev
+```
+
+With `ENABLE_MONAD=true` and no private key / RPC, the Monad adapter returns
+deterministic quotes (Pyth mid + `MONAD_MOCK_OFFSET_BPS` premium) and the executor
+returns simulated tx hashes — safe for demos. The Live Trading page dropdown then
+exposes three extra pairs tagged **Monad DEX** (MON/USDC, WBTC/USDC, WETH/USDC), the
+nBBO panel can surface a Monad best quote, and the **Cross-Chain Arbitrage Scanner**
+widens to **Solana ↔ Injective ↔ Monad** (N-chain pairwise scan). Execute a Monad plan
+via the **Execute on Monad (viem)** button or `POST /realtime/trade/monad-execute`.
+
+> ⚠️ The `MONAD_TOKENS` ERC-20 contract addresses in `backend/src/config/tokens.ts`
+> are **TODO placeholders** (`0xMONAD...USDC` etc.) pending verification against the
+> live Monad ecosystem contracts. Mock mode bypasses them; **do not enable
+> `MONAD_DEX_MODE=aggregator` or set a real `MONAD_PRIVATE_KEY` until those addresses
+> are verified** — a real signature against a wrong ERC-20 could lose funds.
+
+### OP decision gates to turn on real Monad execution
+
+Before flipping `ENABLE_MONAD=true` with real signing in any non-demo environment, the
+operator must clear these gates (tracked in `docs/monad-integration-roadmap.md`):
+
+1. **Pyth MON feed** — confirm a published Pyth price feed id for the Monad-native
+   assets you intend to quote (currently the registry reuses shared BTC/ETH feed ids).
+2. **Paid Monad RPC** — provision a paid/mainnet `MONAD_RPC_URL`; the public RPC may
+   rate-limit at demo volumes.
+3. **0x / 1inch API key** — obtain `MONAD_AGGREGATOR_API_KEY` if you switch
+   `MONAD_DEX_MODE=aggregator`; the free tier is demo-only.
+4. **Verified ERC-20 addresses** — replace every `0xMONAD...` placeholder in
+   `MONAD_TOKENS` with the real on-chain contract addresses.
+5. **Funded signer** — fund the EVM address derived from `MONAD_PRIVATE_KEY` with enough
+   MON for gas; testnet faucet is free, mainnet is not.
+
+None of these are required for the zero-key demo path above.
+
+---
+
 ## 🛠️ Tech stack
 
 | Component | Technologies |

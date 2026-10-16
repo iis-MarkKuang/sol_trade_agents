@@ -87,6 +87,13 @@ INJECTIVE_MNEMONIC="<testnet mnemonic>"
 | `REDIS_URL` | ⚠️ if using BullMQ queues | Local Supabase / Upstash / Azure Cache |
 | `ENABLE_INJECTIVE` | optional | `true` → register Helix adapter + Injective executor |
 | `INJECTIVE_MNEMONIC` | optional | Empty → simulated tx hashes; set → real testnet orders via MCP |
+| `ENABLE_MONAD` | optional | `true` → register the Monad DEX adapter + viem executor (default `false`) |
+| `MONAD_RPC_URL` | optional | Monad JSON-RPC endpoint; empty → mock mode (no network) |
+| `MONAD_DEX_MODE` | optional | `mock` (default, deterministic) or `aggregator` (0x/1inch API) |
+| `MONAD_AGGREGATOR` | optional | `0x` (default) or `1inch` when in aggregator mode |
+| `MONAD_AGGREGATOR_API_KEY` | optional | Required only for 0x Pro / 1inch API in non-demo envs |
+| `MONAD_PRIVATE_KEY` | optional | EVM private key for real signing; empty → `MockMonadTradeExecutor`. **Keep in `.env` only.** |
+| `MONAD_MOCK_OFFSET_BPS` | optional | Premium (bps) the mock adapter adds over Pyth mid (default `30`) |
 | `LLM_PROVIDER` | optional | `deepseek`, `openai`, or `azure`; credentials are auto-detected if omitted |
 | `DEEPSEEK_API_KEY` | optional | Direct DeepSeek API key |
 | `OPENAI_API_KEY` | optional | Direct OpenAI or compatible-gateway key |
@@ -178,6 +185,7 @@ Open <http://localhost:5173>. The top-right **Realtime WS** + **Offline WS** ind
 | `GET`  | `/realtime/cross-chain/arb` | Cross-chain arb scan |
 | `POST` | `/realtime/cross-chain/plan` | Natural-language plan |
 | `POST` | `/realtime/trade/injective-execute` | Execute Injective plan via MCP |
+| `POST` | `/realtime/trade/monad-execute` | Execute Monad plan via viem (or mock) |
 | `GET`  | `/agent/identity` | Our ERC-8004 agent identity card |
 | `GET`  | `/agent/registry` | Browse the Injective Agent Registry |
 | `POST` | `/mcp` | MCP server we expose (tools/list, tools/call) |
@@ -203,6 +211,49 @@ docker run -d --name frontend -p 8080:80 sol-trade-frontend
 ```
 
 > The `nginx.conf` proxies `/api` and `/socket.io` to `http://backend:3000` — adjust if your container network name differs.
+
+---
+
+## 3.7 Monad integration (experimental, zero-key demo)
+
+The agent supports the **Monad** EVM L1 (chain id `143`) behind `ENABLE_MONAD` (default
+`false`). It is fully additive: with the flag off, behavior is identical to the base app.
+
+### Zero-key demo
+
+```bash
+cd backend
+ENABLE_MONAD=true MONAD_DEX_MODE=mock MONAD_PRIVATE_KEY="" npm run start:dev
+```
+
+- The Live Trading dropdown gains three **Monad DEX** pairs: MON/USDC, WBTC/USDC, WETH/USDC.
+- The nBBO panel can surface a Monad best quote (mock = Pyth mid + `MONAD_MOCK_OFFSET_BPS`).
+- The **Cross-Chain Arbitrage Scanner** widens to **Solana ↔ Injective ↔ Monad** (N-chain
+  pairwise scan) when both `ENABLE_INJECTIVE` and `ENABLE_MONAD` are on.
+- Execute a Monad plan via the **Execute on Monad (viem)** button or
+  `POST /realtime/trade/monad-execute` (returns a simulated tx hash when no key is set).
+
+### OP decision gates for real Monad execution
+
+Before enabling real signing in any non-demo environment, clear these gates (see
+`docs/monad-integration-roadmap.md`):
+
+1. **Pyth MON feed** — confirm a published Pyth price feed id for the Monad-native assets.
+2. **Paid Monad RPC** — provision a paid/mainnet `MONAD_RPC_URL`.
+3. **0x / 1inch API key** — obtain `MONAD_AGGREGATOR_API_KEY` if using aggregator mode.
+4. **Verified ERC-20 addresses** — replace the `0xMONAD...` placeholders in
+   `backend/src/config/tokens.ts` `MONAD_TOKENS` with real on-chain contract addresses.
+   **Do not enable `MONAD_DEX_MODE=aggregator` or set a real key until these are verified.**
+5. **Funded signer** — fund the EVM address from `MONAD_PRIVATE_KEY` with MON for gas.
+
+### Troubleshooting (Monad)
+
+| Symptom | Fix |
+|---|---|
+| No Monad pairs in dropdown | `ENABLE_MONAD=true` set? Restart the backend after changing the flag. |
+| Monad quote missing from nBBO | Mock mode needs a Pyth mid for the asset; ensure `PYTH_USE_MOCK=true` or a live feed. |
+| `monad-execute` returns "not enabled" | `ENABLE_MONAD=false`; set it true and restart. |
+| Real signing reverts / wrong contract | ERC-20 addresses in `MONAD_TOKENS` are placeholders — verify them before real signing. |
 
 ---
 
